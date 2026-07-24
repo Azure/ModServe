@@ -1,0 +1,8 @@
+# Single-box monolith: 2x TP2 data-parallel replicas (4 GPU).
+monolith_nodes:
+  - node_address: 127.0.0.1:8080
+    node_tp: TP2
+    local_ranks: [0, 1]
+  - node_address: 127.0.0.1:8081
+    node_tp: TP2
+    local_ranks: [2, 3]

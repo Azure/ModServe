@@ -1,0 +1,246 @@
+{
+  "model": "OpenGVLab/InternVL2_5-26B",
+  "encoder": {
+    "stage": "encoder",
+    "tps": [
+      1,
+      4
+    ],
+    "points": [
+      {
+        "parallelism": 1,
+        "batch": 1,
+        "load_unit": 256,
+        "latency_ms": 92.222,
+        "tokens_per_s": 2775.9
+      },
+      {
+        "parallelism": 1,
+        "batch": 2,
+        "load_unit": 256,
+        "latency_ms": 159.514,
+        "tokens_per_s": 3209.7
+      },
+      {
+        "parallelism": 1,
+        "batch": 4,
+        "load_unit": 256,
+        "latency_ms": 293.37,
+        "tokens_per_s": 3490.5
+      },
+      {
+        "parallelism": 1,
+        "batch": 8,
+        "load_unit": 256,
+        "latency_ms": 573.047,
+        "tokens_per_s": 3573.9
+      },
+      {
+        "parallelism": 1,
+        "batch": 16,
+        "load_unit": 256,
+        "latency_ms": 1135.479,
+        "tokens_per_s": 3607.3
+      },
+      {
+        "parallelism": 4,
+        "batch": 1,
+        "load_unit": 256,
+        "latency_ms": 114.24,
+        "tokens_per_s": 2240.9
+      },
+      {
+        "parallelism": 4,
+        "batch": 2,
+        "load_unit": 256,
+        "latency_ms": 190.579,
+        "tokens_per_s": 2686.5
+      },
+      {
+        "parallelism": 4,
+        "batch": 4,
+        "load_unit": 256,
+        "latency_ms": 316.491,
+        "tokens_per_s": 3235.5
+      },
+      {
+        "parallelism": 4,
+        "batch": 8,
+        "load_unit": 256,
+        "latency_ms": 562.065,
+        "tokens_per_s": 3643.7
+      },
+      {
+        "parallelism": 4,
+        "batch": 16,
+        "load_unit": 256,
+        "latency_ms": 1116.334,
+        "tokens_per_s": 3669.2
+      }
+    ],
+    "fit_r2": 0.9922,
+    "slo_ms": 2000.0,
+    "m_c_by_tp": {
+      "1": {
+        "m_c_per_s": 3834.3167637105976,
+        "at_batch": 16,
+        "at_load_unit": 256,
+        "at_latency_ms": 1068.248
+      },
+      "4": {
+        "m_c_per_s": 3852.6807857760755,
+        "at_batch": 16,
+        "at_load_unit": 256,
+        "at_latency_ms": 1063.156
+      }
+    },
+    "deploy_tp": 1,
+    "m_c_per_s": 3834.3167637105976
+  },
+  "backend": {
+    "stage": "backend",
+    "tps": [
+      4
+    ],
+    "points": [
+      {
+        "parallelism": 4,
+        "batch": 1,
+        "load_unit": 512,
+        "latency_ms": 77.716,
+        "tokens_per_s": 6588.1
+      },
+      {
+        "parallelism": 4,
+        "batch": 1,
+        "load_unit": 1024,
+        "latency_ms": 109.786,
+        "tokens_per_s": 9327.2
+      },
+      {
+        "parallelism": 4,
+        "batch": 1,
+        "load_unit": 2048,
+        "latency_ms": 181.07,
+        "tokens_per_s": 11310.5
+      },
+      {
+        "parallelism": 4,
+        "batch": 1,
+        "load_unit": 4096,
+        "latency_ms": 304.551,
+        "tokens_per_s": 13449.3
+      },
+      {
+        "parallelism": 4,
+        "batch": 1,
+        "load_unit": 8192,
+        "latency_ms": 582.19,
+        "tokens_per_s": 14071.0
+      },
+      {
+        "parallelism": 4,
+        "batch": 1,
+        "load_unit": 16384,
+        "latency_ms": 1222.069,
+        "tokens_per_s": 13406.8
+      },
+      {
+        "parallelism": 4,
+        "batch": 2,
+        "load_unit": 512,
+        "latency_ms": 96.088,
+        "tokens_per_s": 10656.9
+      },
+      {
+        "parallelism": 4,
+        "batch": 2,
+        "load_unit": 1024,
+        "latency_ms": 163.357,
+        "tokens_per_s": 12536.9
+      },
+      {
+        "parallelism": 4,
+        "batch": 2,
+        "load_unit": 2048,
+        "latency_ms": 247.739,
+        "tokens_per_s": 16533.6
+      },
+      {
+        "parallelism": 4,
+        "batch": 2,
+        "load_unit": 4096,
+        "latency_ms": 449.342,
+        "tokens_per_s": 18231.1
+      },
+      {
+        "parallelism": 4,
+        "batch": 2,
+        "load_unit": 8192,
+        "latency_ms": 855.825,
+        "tokens_per_s": 19144.1
+      },
+      {
+        "parallelism": 4,
+        "batch": 2,
+        "load_unit": 16384,
+        "latency_ms": 1795.098,
+        "tokens_per_s": 18254.2
+      },
+      {
+        "parallelism": 4,
+        "batch": 4,
+        "load_unit": 512,
+        "latency_ms": 178.254,
+        "tokens_per_s": 11489.2
+      },
+      {
+        "parallelism": 4,
+        "batch": 4,
+        "load_unit": 1024,
+        "latency_ms": 301.676,
+        "tokens_per_s": 13577.5
+      },
+      {
+        "parallelism": 4,
+        "batch": 4,
+        "load_unit": 2048,
+        "latency_ms": 559.63,
+        "tokens_per_s": 14638.3
+      },
+      {
+        "parallelism": 4,
+        "batch": 4,
+        "load_unit": 4096,
+        "latency_ms": 1073.688,
+        "tokens_per_s": 15259.6
+      },
+      {
+        "parallelism": 4,
+        "batch": 4,
+        "load_unit": 8192,
+        "latency_ms": 2137.782,
+        "tokens_per_s": 15328.0
+      },
+      {
+        "parallelism": 4,
+        "batch": 4,
+        "load_unit": 16384,
+        "latency_ms": 4553.616,
+        "tokens_per_s": 14392.1
+      }
+    ],
+    "fit_r2": 0.9334,
+    "slo_ms": 5000.0,
+    "m_c_by_tp": {
+      "4": {
+        "m_c_per_s": 26628.628603017376,
+        "at_batch": 4,
+        "at_load_unit": 12288,
+        "at_latency_ms": 1845.833
+      }
+    },
+    "deploy_tp": 2,
+    "m_c_per_s": 26628.628603017376
+  }
+}

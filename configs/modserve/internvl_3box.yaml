@@ -1,0 +1,23 @@
+# 3-box (24 GPU) ModServe: 4x TP4 text + 8x TP1 encoders. InternVL2.5-26B.
+modserve_text_nodes:
+  - text_node_address: 10.0.0.4:8080
+    text_node_tp: TP4
+    local_ranks: [0, 1, 2, 3]
+  - text_node_address: 10.0.0.5:8080
+    text_node_tp: TP4
+    local_ranks: [0, 1, 2, 3]
+  - text_node_address: 10.0.0.6:8080
+    text_node_tp: TP4
+    local_ranks: [0, 1, 2, 3]
+  - text_node_address: 10.0.0.6:8081
+    text_node_tp: TP4
+    local_ranks: [4, 5, 6, 7]
+modserve_image_nodes:
+  - {image_node_address: 10.0.0.4:8086, image_node_rank: 0, image_node_tp: TP1, image_node_gpu_id: "4", numa_physcpu: "8"}
+  - {image_node_address: 10.0.0.4:8087, image_node_rank: 1, image_node_tp: TP1, image_node_gpu_id: "5", numa_physcpu: "9"}
+  - {image_node_address: 10.0.0.4:8088, image_node_rank: 2, image_node_tp: TP1, image_node_gpu_id: "6", numa_physcpu: "10"}
+  - {image_node_address: 10.0.0.4:8089, image_node_rank: 3, image_node_tp: TP1, image_node_gpu_id: "7", numa_physcpu: "11"}
+  - {image_node_address: 10.0.0.5:8086, image_node_rank: 4, image_node_tp: TP1, image_node_gpu_id: "4", numa_physcpu: "8"}
+  - {image_node_address: 10.0.0.5:8087, image_node_rank: 5, image_node_tp: TP1, image_node_gpu_id: "5", numa_physcpu: "9"}
+  - {image_node_address: 10.0.0.5:8088, image_node_rank: 6, image_node_tp: TP1, image_node_gpu_id: "6", numa_physcpu: "10"}
+  - {image_node_address: 10.0.0.5:8089, image_node_rank: 7, image_node_tp: TP1, image_node_gpu_id: "7", numa_physcpu: "11"}

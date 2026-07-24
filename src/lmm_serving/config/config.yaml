@@ -1,0 +1,68 @@
+# lmm-serving configuration
+
+IMAGE_DIR: ${HOME}/hf_cache/sharegpt_images
+HF_HOME: ${HOME}/hf_cache
+HF_HUB_OFFLINE: "1"
+# Full Azure source trace (fetch_trace.py downloads here, then samples a window).
+SOURCE_TRACE: ${HOME}/hf_cache/AzureLMMInferenceTrace_multimodal.csv
+# Sampled trace base name; client replays ${TRACE}_scale<QPM>.csv.
+TRACE: AzureLMMInferenceTrace_img_heavy_1_hour
+
+# Model: meta-llama/Llama-3.2-11B-Vision-Instruct or OpenGVLab/InternVL2_5-26B
+MODEL: meta-llama/Llama-3.2-11B-Vision-Instruct
+
+# Env name/home (legacy conda fallback; Pixi sets CONDA_PREFIX itself)
+CONDA_ENV: mLLM
+CONDA_HOME: ${HOME}/miniconda3
+
+# Cluster manager
+CLUSTER_MANAGER_IP: 127.0.0.1
+CLUSTER_MANAGER_PORT: 7070
+# Topology file under configs/<setup>/ (local.yaml = single-box loopback).
+NODES_CONFIG: local.yaml
+
+# Disaggregated serving. For multi-box, set NCCL_MASTER_ADDR to box-1's eth0 IP.
+TENSOR_TRANSFER_PORT: 5050
+NCCL_MASTER_ADDR: 127.0.0.1
+NCCL_MASTER_PORT: 29500
+
+# InfiniBand (cross-box NCCL; ignored on single-box loopback runs)
+NCCL_SOCKET_IFNAME: eth0
+NCCL_IB_HCA: mlx5_ib0,mlx5_ib1,mlx5_ib2,mlx5_ib3,mlx5_ib4,mlx5_ib5,mlx5_ib6,mlx5_ib7
+# Force NCCL TCP instead of IB (set when boxes can't RDMA across subnets).
+NCCL_IB_DISABLE: false
+
+SCHEDULER: least_loaded
+TEXT_SCHEDULER: least_loaded
+# In-text-node scheduling: fcfs or priority (SLO-driven, shorter requests first).
+INSTANCE_SCHEDULING: priority
+# text-node KV-cache fraction (empty = per-TP default). Kept below ~0.85 so that
+# InternVL's large multi-image prefills have headroom for transient activation
+# spikes — at 0.90 the decoder-only InternVL engine can OOM mid-run (activation of
+# concurrent ~50k-token un-chunked prefills) and take the text node down.
+TEXT_GPU_UTIL: "0.82"
+# Cap on total in-flight image tokens admitted to a single text node. This is the
+# primary backpressure that bounds concurrent multimodal prefill activation memory;
+# lower it if the text-node engine OOMs, raise it for more throughput.
+TEXT_INFLIGHT_IMAGE_TOKEN_BUDGET: 90000
+# text-node max sequence length. Empty = safe per-model defaults (Llama 32768,
+# InternVL 55296). InternVL is decoder-only and expands image tokens into the LLM
+# sequence, so multi-image prompts can reach ~50k tokens — setting this too low
+# makes the vLLM engine abort on an over-long request and drop the whole text
+# node. Only override with a value >= your largest expected request; lower it only
+# to save KV cache at very low TP (and only for text-light workloads).
+TEXT_MAX_MODEL_LEN: ""
+# text-node max concurrent sequences (empty = per-model default).
+TEXT_MAX_NUM_SEQS: ""
+TEXT_PREEMPTION_MODE: ""
+
+# Monolith
+MONOLITH_MAX_NUM_SEQS: 16
+MONOLITH_GPU_UTIL: ""
+
+AUTOSCALE: false
+AUTOSCALE_INTERVAL_S: 30
+AUTOSCALE_WINDOW_S: 60
+AUTOSCALE_IMAGE_MC: 0.0
+AUTOSCALE_TEXT_MC: 0.0
+AUTOSCALE_MONOLITH_MC: 0.0

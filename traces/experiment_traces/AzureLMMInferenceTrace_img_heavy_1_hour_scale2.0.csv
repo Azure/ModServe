@@ -1,0 +1,145 @@
+TIMESTAMP,num_images,n_context_tokens,n_generated_tokens,Timestamp,num_requests,image_ids,text_prompt
+2024-10-15 12:00:00.269000+00:00,0,770,491,0.0,1,,Please describe the event or scene this image shows.
+2024-10-15 12:00:06.513000+00:00,1,964,79,6.244,1,11293.jpg,What objects and people are shown in the picture?
+2024-10-15 12:00:07.566000+00:00,1,1724,28,7.297,1,192.jpg,Describe what the picture shows?
+2024-10-15 12:00:07.623000+00:00,0,913,370,7.354,1,,Please elaborate on what this image shows.
+2024-10-15 12:00:08.415000+00:00,0,1195,1,8.146,1,,What objects and people are shown in the picture?
+2024-10-15 12:00:08.888000+00:00,0,1258,403,8.619,1,,Please describe the content of the picture.
+2024-10-15 12:00:10.872000+00:00,0,1105,336,10.603,1,,Can you explain in detail what is happening in the picture?
+2024-10-15 12:00:12.763000+00:00,1,363,207,12.494,1,1570.jpg,Describe everything in the image
+2024-10-15 12:00:13.773000+00:00,0,1480,149,13.504,1,,Please explain the visual content of the image in detail.
+2024-10-15 12:00:14.174000+00:00,0,6219,85,13.905,1,,Can you analyze and elaborate on all the elements and details shown in this image?
+2024-10-15 12:00:14.468000+00:00,1,248,47,14.199,1,18551.jpg,What scene is mainly depicted in the picture?
+2024-10-15 12:00:14.717000+00:00,1,957,96,14.448,1,20884.jpg,Please describe what is happening in the image.
+2024-10-15 12:00:15.065000+00:00,0,269,14,14.796,1,,Please describe specifically what this image is about.
+2024-10-15 12:00:15.811000+00:00,25,8817,307,15.542,1,10515.jpg 16348.jpg 11552.jpg 14274.jpg 12849.jpg 11422.jpg 11811.jpg 2205.jpg 22309.jpg 1233.jpg 13107.jpg 15440.jpg 18810.jpg 13886.jpg 14922.jpg 18421.jpg,What are the striking details of this image?
+2024-10-15 12:00:17.486000+00:00,1,1800,25,17.217,1,21661.jpg,What elements and people are included in the image?
+2024-10-15 12:00:19.120000+00:00,1,1433,61,18.851,1,1583.jpg,Please explain the scene depicted in the picture.
+2024-10-15 12:00:19.864000+00:00,0,14797,51,19.595,1,,Please describe the content of the picture.
+2024-10-15 12:00:22.069000+00:00,9,4425,464,21.8,1,17385.jpg 13237.jpg 10256.jpg 15310.jpg 16218.jpg 22439.jpg 22699.jpg 15051.jpg 18681.jpg,Please describe the scene depicted in this picture.
+2024-10-15 12:00:22.386000+00:00,0,1625,60,22.117,1,,Can you describe this photo in detail?
+2024-10-15 12:00:22.957000+00:00,0,548,388,22.688,1,,Analyze and describe in detail the visual elements in this image.
+2024-10-15 12:00:23.063000+00:00,9,3966,288,22.794,1,17644.jpg 19978.jpg 20624.jpg 10126.jpg 16478.jpg 12719.jpg 20495.jpg 19329.jpg 16867.jpg,Please describe the event or scene this image shows.
+2024-10-15 12:00:23.209000+00:00,1,952,26,22.94,1,11163.jpg,Please use detailed words to describe what the picture is about.
+2024-10-15 12:00:25.321000+00:00,0,1594,524,25.052,1,,Can you explain what this image shows?
+2024-10-15 12:00:25.737000+00:00,9,4196,150,25.468,1,20365.jpg 12070.jpg 14793.jpg 17514.jpg 12979.jpg 11682.jpg 16737.jpg 0.jpg 21272.jpg,Describe this image.
+2024-10-15 12:00:26.119000+00:00,1,707,64,25.85,1,15570.jpg,Describe this image.
+2024-10-15 12:00:27.112000+00:00,0,1274,463,26.843,1,,Can you describe this photo in detail?
+2024-10-15 12:00:27.267000+00:00,0,1379,24,26.998,1,,Please interpret and describe each detail of this image and the overall scene they create.
+2024-10-15 12:00:27.618000+00:00,1,254,31,27.349,1,22828.jpg,Describe this image.
+2024-10-15 12:00:28.459000+00:00,1,1018,28,28.19,1,20235.jpg,Can you list all the objects and people in the picture?
+2024-10-15 12:00:28.513000+00:00,1,908,62,28.244,1,21012.jpg,What elements and people are included in the image?
+2024-10-15 12:00:30.537000+00:00,0,678,603,30.268,1,,Please describe the situation in the picture as clearly as possible.
+2024-10-15 12:00:30.979000+00:00,0,301,1,30.71,1,,Please describe the content of the picture.
+2024-10-15 12:00:31.067000+00:00,9,3999,277,30.798,1,22569.jpg 18940.jpg 21920.jpg 18032.jpg 20754.jpg 20105.jpg 11033.jpg 1596.jpg 14403.jpg,Please explain the scene depicted in the picture.
+2024-10-15 12:00:32.214000+00:00,0,437,57,31.945,1,,Can you list all the objects and people in the picture?
+2024-10-15 12:00:32.335000+00:00,0,513,78,32.066,1,,Please use detailed words to describe what the picture is about.
+2024-10-15 12:00:32.716000+00:00,0,1034,38,32.447,1,,What is compelling about this image?
+2024-10-15 12:00:33.018000+00:00,0,438,67,32.749,1,,Describe the content of a given image in detail
+2024-10-15 12:00:33.259000+00:00,0,188,342,32.99,1,,Please describe the event or scene this image shows.
+2024-10-15 12:00:34.769000+00:00,0,3584,269,34.5,1,,Describe this image.
+2024-10-15 12:00:35.487000+00:00,25,8855,362,35.218,1,1259.jpg 13367.jpg 14014.jpg 13497.jpg 19718.jpg 18162.jpg 2218.jpg 14663.jpg 19459.jpg 10645.jpg 19848.jpg 17774.jpg 21142.jpg 10386.jpg 17903.jpg 17255.jpg,Describe the content of a given image in detail
+2024-10-15 12:00:35.821000+00:00,0,969,368,35.552,1,,Can you analyze and elaborate on all the elements and details shown in this image?
+2024-10-15 12:00:36.124000+00:00,1,1114,28,35.855,1,10904.jpg,What items or people are prominent in the picture?
+2024-10-15 12:00:36.815000+00:00,16,5639,455,36.546,1,21401.jpg 16997.jpg 21791.jpg 1220.jpg 11941.jpg 11294.jpg 1907.jpg 18292.jpg 1246.jpg 16607.jpg 10775.jpg 19589.jpg 17125.jpg 16089.jpg 15181.jpg 13108.jpg,Describe what the picture shows?
+2024-10-15 12:00:37.016000+00:00,1,887,35,36.747,1,21531.jpg,Describe the content of a given image in detail
+2024-10-15 12:00:37.785000+00:00,0,990,658,37.516,1,,Describe every detail in the picture.
+2024-10-15 12:00:38.312000+00:00,0,2445,331,38.043,1,,Please describe specifically what this image is about.
+2024-10-15 12:00:39.123000+00:00,9,4180,63,38.854,1,13238.jpg 14275.jpg 11423.jpg 13756.jpg 12330.jpg 13626.jpg 18552.jpg 15052.jpg 10257.jpg,Please describe the content of the picture.
+2024-10-15 12:00:40.487000+00:00,1,624,227,40.218,1,22050.jpg,Please describe specifically what this image is about.
+2024-10-15 12:00:41.768000+00:00,0,2256,419,41.499,1,,Can you describe this photo in detail?
+2024-10-15 12:00:42.789000+00:00,0,955,222,42.52,1,,Please describe in detail the dynamic and static elements in this image.
+2024-10-15 12:00:44.582000+00:00,0,302,277,44.313,1,,Can you explain in detail what is happening in the picture?
+2024-10-15 12:00:45.565000+00:00,0,726,44,45.296,1,,Please describe the event or scene this image shows.
+2024-10-15 12:00:46.365000+00:00,0,399,99,46.096,1,,Please describe the scene depicted in this picture.
+2024-10-15 12:00:47.011000+00:00,0,106,37,46.742,1,,Please elaborate on what this image shows.
+2024-10-15 12:00:47.457000+00:00,0,353,192,47.188,1,,Describe the content of a given image in detail
+2024-10-15 12:00:49.260000+00:00,0,1350,284,48.991,1,,What objects and people are shown in the picture?
+2024-10-15 12:00:50.369000+00:00,4,2910,75,50.1,1,1920.jpg 18811.jpg 15311.jpg 18422.jpg,Please describe the scene in the picture.
+2024-10-15 12:00:52.869000+00:00,0,655,403,52.6,1,,Describe every detail in the picture.
+2024-10-15 12:00:54.112000+00:00,0,1088,764,53.843,1,,Please describe specifically what this image is about.
+2024-10-15 12:00:54.356000+00:00,0,1198,1,54.087,1,,What items or people are prominent in the picture?
+2024-10-15 12:00:55.633000+00:00,0,379,183,55.364,1,,Can you describe the main elements in the image?
+2024-10-15 12:00:55.818000+00:00,0,1023,443,55.549,1,,Can you describe this photo in detail?
+2024-10-15 12:00:56.737000+00:00,25,8834,347,56.468,1,11683.jpg 14533.jpg 20236.jpg 14923.jpg 20625.jpg 2244.jpg 1.jpg 21013.jpg 10646.jpg 2231.jpg 16868.jpg 12071.jpg 17386.jpg 10516.jpg 16738.jpg 11164.jpg,What scene is this picture depicting?
+2024-10-15 12:00:57.210000+00:00,0,768,124,56.941,1,,Please explain in detail the scene depicted in the picture.
+2024-10-15 12:00:57.761000+00:00,0,1002,593,57.492,1,,Please explain the visual content of the image in detail.
+2024-10-15 12:00:59.352000+00:00,0,1665,69,59.083,1,,Describe the given image
+2024-10-15 12:01:00.845000+00:00,1,1492,32,60.576,1,11553.jpg,What scene is mainly depicted in the picture?
+2024-10-15 12:01:03.739000+00:00,0,975,1,63.47,1,,Describe the given image
+2024-10-15 12:01:04.310000+00:00,0,3256,424,64.041,1,,Please describe the content of the picture.
+2024-10-15 12:01:05.098000+00:00,0,438,1,64.829,1,,Analyze and describe in detail the visual elements in this image.
+2024-10-15 12:01:05.830000+00:00,0,1122,22,65.561,1,,Please explain the visual content of the image in detail.
+2024-10-15 12:01:06.023000+00:00,1,446,266,65.754,1,18033.jpg,Describe all the elements in the picture.
+2024-10-15 12:01:06.122000+00:00,25,9155,341,65.853,1,1298.jpg 11034.jpg 20366.jpg 21273.jpg 21921.jpg 20755.jpg 16219.jpg 16349.jpg 2257.jpg 10387.jpg 20885.jpg 22829.jpg 15441.jpg 13887.jpg 15960.jpg 15571.jpg,Please explain the visual content of the image in detail.
+2024-10-15 12:01:08.759000+00:00,1,353,82,68.49,1,18682.jpg,Please conduct an in-depth analysis of the scene in the picture.
+2024-10-15 12:01:10.044000+00:00,0,3669,150,69.775,1,,Please describe the content of the picture.
+2024-10-15 12:01:11.424000+00:00,0,1607,137,71.155,1,,Please describe the situation in the picture as clearly as possible.
+2024-10-15 12:01:11.960000+00:00,9,4306,588,71.691,1,1933.jpg 12590.jpg 19979.jpg 1285.jpg 17645.jpg 14144.jpg 11812.jpg 19719.jpg 14015.jpg,Please explain the scene depicted in the picture.
+2024-10-15 12:01:12.369000+00:00,0,1852,34,72.1,1,,Can you explain what this image shows?
+2024-10-15 12:01:12.618000+00:00,1,1205,465,72.349,1,12200.jpg,Can you describe this photo in detail?
+2024-10-15 12:01:14.072000+00:00,0,694,81,73.803,1,,Describe this image.
+2024-10-15 12:01:14.840000+00:00,1,819,3,74.571,1,20106.jpg,Please describe the scene depicted in this picture.
+2024-10-15 12:01:18.460000+00:00,0,769,8,78.191,1,,Please describe the event or scene this image shows.
+2024-10-15 12:01:18.821000+00:00,0,3013,104,78.552,1,,Provide a detailed description of the image.
+2024-10-15 12:01:19.919000+00:00,0,731,539,79.65,1,,Provide a detailed description of the presented image.
+2024-10-15 12:01:20.366000+00:00,0,2354,742,80.097,1,,Please describe the scene in the picture.
+2024-10-15 12:01:21.021000+00:00,0,2636,460,80.752,1,,Describe this image.
+2024-10-15 12:01:23.360000+00:00,0,739,347,83.091,1,,Provide a detailed description of the image.
+2024-10-15 12:01:24.579000+00:00,0,1057,499,84.31,1,,Describe this image.
+2024-10-15 12:01:25.513000+00:00,1,1022,28,85.244,1,18941.jpg,Can you analyze and elaborate on all the elements and details shown in this image?
+2024-10-15 12:01:26.112000+00:00,0,666,391,85.843,1,,Please elaborate on what this image shows.
+2024-10-15 12:01:28.852000+00:00,0,864,402,88.583,1,,What scene is mainly depicted in the picture?
+2024-10-15 12:01:29.424000+00:00,0,1479,367,89.155,1,,What is compelling about this image?
+2024-10-15 12:01:30.172000+00:00,1,990,30,89.903,1,17904.jpg,Please describe specifically what this image is about.
+2024-10-15 12:01:30.316000+00:00,1,692,40,90.047,1,18163.jpg,Describe the given image
+2024-10-15 12:01:30.763000+00:00,0,386,399,90.494,1,,Can you explain what this image shows?
+2024-10-15 12:01:31.514000+00:00,1,441,200,91.245,1,10127.jpg,Provide a detailed description of the main elements in the image.
+2024-10-15 12:01:32.460000+00:00,1,1174,90,92.191,1,1946.jpg,"Describe the image, paying attention to its inner details."
+2024-10-15 12:01:32.874000+00:00,4,2470,79,92.605,1,11295.jpg 12460.jpg 227.jpg 21143.jpg,Describe this image.
+2024-10-15 12:01:33.021000+00:00,0,2841,353,92.752,1,,Please describe the scene in the picture.
+2024-10-15 12:01:33.103000+00:00,0,633,467,92.834,1,,Please conduct an in-depth analysis of the scene in the picture.
+2024-10-15 12:01:33.839000+00:00,9,2171,365,93.57,1,22180.jpg 18293.jpg 15830.jpg 10776.jpg 15700.jpg 11942.jpg 1272.jpg 19849.jpg 20496.jpg,Provide a detailed description of the presented image.
+2024-10-15 12:01:34.338000+00:00,1,1173,75,94.069,1,14404.jpg,Please describe specifically what you observed in the picture and the possible scenes they might form.
+2024-10-15 12:01:35.072000+00:00,9,3985,304,94.803,1,13368.jpg 13498.jpg 17775.jpg 11424.jpg 14664.jpg 16608.jpg 1959.jpg 14276.jpg 21662.jpg,Please use detailed words to describe what the picture is about.
+2024-10-15 12:01:35.353000+00:00,0,1876,351,95.084,1,,Describe the given image
+2024-10-15 12:01:35.462000+00:00,4,2913,97,95.193,1,19070.jpg 17256.jpg 21402.jpg 15053.jpg,Describe this image.
+2024-10-15 12:01:35.960000+00:00,0,5577,1375,95.691,1,,Can you describe all the objects and characters in the picture?
+2024-10-15 12:01:37.071000+00:00,9,3930,322,96.802,1,21792.jpg 12331.jpg 16998.jpg 13109.jpg 20237.jpg 19200.jpg 11554.jpg 13757.jpg 13239.jpg,Please describe in detail the dynamic and static elements in this image.
+2024-10-15 12:01:38.387000+00:00,0,1249,411,98.118,1,,Please describe the content of the picture.
+2024-10-15 12:01:39.210000+00:00,0,343,67,98.941,1,,Describe this image.
+2024-10-15 12:01:40.210000+00:00,0,2264,931,99.941,1,,Please conduct an in-depth analysis of the scene in the picture.
+2024-10-15 12:01:41.522000+00:00,0,616,76,101.253,1,,What items or people are prominent in the picture?
+2024-10-15 12:01:41.961000+00:00,0,811,280,101.692,1,,Please describe the content of the picture.
+2024-10-15 12:01:42.176000+00:00,1,1276,400,101.907,1,10905.jpg,Can you describe what this image is about?
+2024-10-15 12:01:43.015000+00:00,25,8280,364,102.746,1,13627.jpg 18423.jpg 17126.jpg 10258.jpg 1609.jpg 15182.jpg 18553.jpg 16739.jpg 16869.jpg 11684.jpg 16479.jpg 14924.jpg 21532.jpg 22051.jpg 11165.jpg 10647.jpg,Please describe specifically what you observed in the picture and the possible scenes they might form.
+2024-10-15 12:01:43.326000+00:00,4,3622,428,103.057,1,21014.jpg 18683.jpg 2283.jpg 10517.jpg,Please conduct an in-depth analysis of the scene in the picture.
+2024-10-15 12:01:44.111000+00:00,0,1039,397,103.842,1,,Can you list all the objects and people in the picture?
+2024-10-15 12:01:44.674000+00:00,0,2919,474,104.405,1,,Describe all the elements in the picture.
+2024-10-15 12:01:45.841000+00:00,0,802,271,105.572,1,,Can you describe what this image is about?
+2024-10-15 12:01:46.787000+00:00,0,1689,340,106.518,1,,Please use detailed words to describe what the picture is about.
+2024-10-15 12:01:47.213000+00:00,0,578,424,106.944,1,,Please describe in detail the dynamic and static elements in this image.
+2024-10-15 12:01:48.112000+00:00,0,803,386,107.843,1,,Describe all the elements in the picture.
+2024-10-15 12:01:48.589000+00:00,25,9497,289,108.32,1,1972.jpg 10.jpg 22440.jpg 20626.jpg 22570.jpg 1998.jpg 10388.jpg 12072.jpg 1635.jpg 12850.jpg 11035.jpg 21274.jpg 15312.jpg 21922.jpg 12591.jpg 22310.jpg,Please describe the situation in the picture as clearly as possible.
+2024-10-15 12:01:48.963000+00:00,1,819,3,108.694,1,10128.jpg,Please describe specifically what this image is about.
+2024-10-15 12:01:49.230000+00:00,1,487,142,108.961,1,19330.jpg,What scene is this picture depicting?
+2024-10-15 12:01:50.011000+00:00,9,3819,109,109.742,1,10777.jpg 12980.jpg 12201.jpg 14145.jpg 20886.jpg 11813.jpg 22181.jpg 15572.jpg 18034.jpg,Can you analyze and elaborate on all the elements and details shown in this image?
+2024-10-15 12:01:50.333000+00:00,0,978,433,110.064,1,,Can you explain what this image shows?
+2024-10-15 12:01:52.263000+00:00,1,969,157,111.994,1,17905.jpg,What is compelling about this image?
+2024-10-15 12:01:52.510000+00:00,25,8815,390,112.241,1,20367.jpg 18942.jpg 14405.jpg 20756.jpg 1622.jpg 12720.jpg 17387.jpg 14534.jpg 11425.jpg 19460.jpg 19590.jpg 14665.jpg 12461.jpg 14794.jpg 13499.jpg 17646.jpg,What scene is mainly depicted in the picture?
+2024-10-15 12:01:52.761000+00:00,0,1091,361,112.492,1,,Please describe specifically what this image is about.
+2024-10-15 12:01:53.211000+00:00,1,1480,90,112.942,1,11943.jpg,Please describe the content of the picture.
+2024-10-15 12:01:54.316000+00:00,1,4125,129,114.047,1,13888.jpg,Please conduct an in-depth analysis of the scene in the picture.
+2024-10-15 12:01:55.259000+00:00,9,4033,349,114.99,1,15961.jpg 2270.jpg 21144.jpg 15442.jpg 18294.jpg 18812.jpg 20107.jpg 17515.jpg 19071.jpg,Can you explain in detail what is happening in the picture?
+2024-10-15 12:01:55.762000+00:00,1,1775,34,115.493,1,10906.jpg,Can you describe the main elements in the image?
+2024-10-15 12:01:56.263000+00:00,9,3850,132,115.994,1,20497.jpg 10259.jpg 20238.jpg 1985.jpg 15701.jpg 1311.jpg 15054.jpg 1674.jpg 12332.jpg,Provide a detailed description of the presented image.
+2024-10-15 12:01:56.760000+00:00,1,1236,500,116.491,1,11166.jpg,Can you explain in detail what is happening in the picture?
+2024-10-15 12:01:57.111000+00:00,1,1043,173,116.842,1,16609.jpg,Please describe the scene depicted in this picture.
+2024-10-15 12:01:57.215000+00:00,1,1464,65,116.946,1,17776.jpg,Can you list all the objects and people in the picture?
+2024-10-15 12:01:57.777000+00:00,0,756,8,117.508,1,,Please describe in depth what this image is about.
+2024-10-15 12:01:57.926000+00:00,1,466,201,117.657,1,15183.jpg,Analyze and describe in detail the visual elements in this image.
+2024-10-15 12:01:58.360000+00:00,1,606,165,118.091,1,21403.jpg,Describe the given image
+2024-10-15 12:01:58.858000+00:00,1,437,161,118.589,1,11685.jpg,Please explain the scene depicted in the picture.
+2024-10-15 12:01:59.113000+00:00,0,989,308,118.844,1,,Describe all the elements in the picture.
+2024-10-15 12:01:59.915000+00:00,0,1537,337,119.646,1,,Describe the given image
+2024-10-15 12:02:00.264000+00:00,0,2101,369,119.995,1,,Please describe specifically what you observed in the picture and the possible scenes they might form.

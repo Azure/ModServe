@@ -1,0 +1,38 @@
+# 3-box (24 GPU) monolith: 12x TP2 vLLM. Llama-3.2-11B-Vision (CroAttn).
+monolith_nodes:
+  - node_address: 10.0.0.4:8080
+    node_tp: TP2
+    local_ranks: [0, 1]
+  - node_address: 10.0.0.4:8081
+    node_tp: TP2
+    local_ranks: [2, 3]
+  - node_address: 10.0.0.4:8082
+    node_tp: TP2
+    local_ranks: [4, 5]
+  - node_address: 10.0.0.4:8083
+    node_tp: TP2
+    local_ranks: [6, 7]
+  - node_address: 10.0.0.5:8080
+    node_tp: TP2
+    local_ranks: [0, 1]
+  - node_address: 10.0.0.5:8081
+    node_tp: TP2
+    local_ranks: [2, 3]
+  - node_address: 10.0.0.5:8082
+    node_tp: TP2
+    local_ranks: [4, 5]
+  - node_address: 10.0.0.5:8083
+    node_tp: TP2
+    local_ranks: [6, 7]
+  - node_address: 10.0.0.6:8080
+    node_tp: TP2
+    local_ranks: [0, 1]
+  - node_address: 10.0.0.6:8081
+    node_tp: TP2
+    local_ranks: [2, 3]
+  - node_address: 10.0.0.6:8082
+    node_tp: TP2
+    local_ranks: [4, 5]
+  - node_address: 10.0.0.6:8083
+    node_tp: TP2
+    local_ranks: [6, 7]

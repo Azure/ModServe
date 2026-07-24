@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lmm-serving"
+version = "0.1.0"
+description = "Serving infrastructure and trace-replay benchmarks for large multimodal models (LMMs)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "The ModServe Authors" }]
+keywords = ["llm", "multimodal", "serving", "vllm", "disaggregation", "inference"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# Runtime dependencies use requirements.txt as the single source of truth (see the
+# [tool.setuptools.dynamic] section below). NOTE: the patched vLLM backend and
+# flash-attn are NOT pip-installable from PyPI — they are built via
+# `llm-backend/build_vllm.sh` / `pixi run setup`. This package is therefore meant
+# to be installed editable from a clone (`pip install -e .` or `pixi run setup`),
+# not fetched from PyPI as a standalone wheel.
+dynamic = ["dependencies"]
+
+[project.urls]
+Homepage = "https://github.com/Azure/ModServe"
+Repository = "https://github.com/Azure/ModServe"
+Paper = "https://dl.acm.org/doi/10.1145/3698038.3698540"
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+# Only the importable package is installed (editable, src layout). Run-by-path
+# scripts (client/, utils/) and the subsystem entry scripts stay out of the package.
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"lmm_serving.config" = ["config.yaml", "load.sh"]

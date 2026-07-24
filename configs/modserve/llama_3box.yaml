@@ -1,0 +1,33 @@
+# 3-box (24 GPU) ModServe: 6x TP2 text + 12x TP1 encoders. Llama-3.2-11B-Vision (CroAttn).
+modserve_text_nodes:
+  - text_node_address: 10.0.0.4:8080
+    text_node_tp: TP2
+    local_ranks: [0, 1]
+  - text_node_address: 10.0.0.4:8081
+    text_node_tp: TP2
+    local_ranks: [2, 3]
+  - text_node_address: 10.0.0.5:8080
+    text_node_tp: TP2
+    local_ranks: [0, 1]
+  - text_node_address: 10.0.0.5:8081
+    text_node_tp: TP2
+    local_ranks: [2, 3]
+  - text_node_address: 10.0.0.6:8080
+    text_node_tp: TP2
+    local_ranks: [0, 1]
+  - text_node_address: 10.0.0.6:8081
+    text_node_tp: TP2
+    local_ranks: [2, 3]
+modserve_image_nodes:
+  - {image_node_address: 10.0.0.4:8086, image_node_rank: 0,  image_node_tp: TP1, image_node_gpu_id: "4", numa_physcpu: "11"}
+  - {image_node_address: 10.0.0.4:8087, image_node_rank: 1,  image_node_tp: TP1, image_node_gpu_id: "5", numa_physcpu: "12"}
+  - {image_node_address: 10.0.0.4:8088, image_node_rank: 2,  image_node_tp: TP1, image_node_gpu_id: "6", numa_physcpu: "13"}
+  - {image_node_address: 10.0.0.4:8089, image_node_rank: 3,  image_node_tp: TP1, image_node_gpu_id: "7", numa_physcpu: "14"}
+  - {image_node_address: 10.0.0.5:8086, image_node_rank: 4,  image_node_tp: TP1, image_node_gpu_id: "4", numa_physcpu: "11"}
+  - {image_node_address: 10.0.0.5:8087, image_node_rank: 5,  image_node_tp: TP1, image_node_gpu_id: "5", numa_physcpu: "12"}
+  - {image_node_address: 10.0.0.5:8088, image_node_rank: 6,  image_node_tp: TP1, image_node_gpu_id: "6", numa_physcpu: "13"}
+  - {image_node_address: 10.0.0.5:8089, image_node_rank: 7,  image_node_tp: TP1, image_node_gpu_id: "7", numa_physcpu: "14"}
+  - {image_node_address: 10.0.0.6:8086, image_node_rank: 8,  image_node_tp: TP1, image_node_gpu_id: "4", numa_physcpu: "11"}
+  - {image_node_address: 10.0.0.6:8087, image_node_rank: 9,  image_node_tp: TP1, image_node_gpu_id: "5", numa_physcpu: "12"}
+  - {image_node_address: 10.0.0.6:8088, image_node_rank: 10, image_node_tp: TP1, image_node_gpu_id: "6", numa_physcpu: "13"}
+  - {image_node_address: 10.0.0.6:8089, image_node_rank: 11, image_node_tp: TP1, image_node_gpu_id: "7", numa_physcpu: "14"}
