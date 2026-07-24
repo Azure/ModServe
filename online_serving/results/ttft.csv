@@ -1,0 +1,8 @@
+request_id,iteration,vllm_requestbody_processing_time,waiting_time,num_prefills,prefill_ms
+chatcmpl-19ac87d226634936ae212fe5c9f3d1f5,0,0.0,0.98,75,48.12
+chatcmpl-f828449050e64986b528c5bfbbe5d642,0,0.0,0.53,523,84.37
+chatcmpl-cbfc434452404d81ab2c98b6a747c61c,0,0.0,0.76,2059,219.3
+chatcmpl-d2069c5c574949d28d9840ff6cabf56c,0,0.0,0.45,523,70.21
+chatcmpl-cc956f3229e44f469b7cc6890fea8828,0,0.0,0.42,523,69.7
+chatcmpl-389d4d36f9624325aaa2514c2603e803,0,0.0,0.97,2059,214.73
+chatcmpl-bd91dcc4928e4f028ea8b135f2f6bef2,0,0.0,0.72,2059,214.9

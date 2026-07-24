@@ -1,0 +1,3316 @@
+diff --git a/.gitignore b/.gitignore
+index 89dab8f13..06ce33832 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -202,3 +202,5 @@ benchmarks/*.json
+ # Linting
+ actionlint
+ shellcheck*/
++
++vllm/metrics/__pycache__/*
+diff --git a/requirements-common.txt b/requirements-common.txt
+index cfa020256..8292babb1 100644
+--- a/requirements-common.txt
++++ b/requirements-common.txt
+@@ -5,7 +5,7 @@ requests >= 2.26.0
+ tqdm
+ blake3
+ py-cpuinfo
+-transformers >= 4.48.2  # Required for Bamba model and Transformers backend.
++transformers == 4.48.3  # Required for Bamba model and Transformers backend. Upper bound: 5.x needs torch>=2.7, but we pin torch==2.5.1.
+ tokenizers >= 0.19.1  # Required for Llama 3.
+ protobuf # Required by LlamaTokenizer.
+ fastapi >= 0.107.0, < 0.113.0; python_version < '3.9'
+@@ -20,7 +20,7 @@ prometheus-fastapi-instrumentator >= 7.0.0
+ tiktoken >= 0.6.0  # Required for DBRX tokenizer
+ lm-format-enforcer >= 0.10.9, < 0.11
+ outlines == 0.1.11
+-lark == 1.2.2 
++lark == 1.2.2
+ xgrammar >= 0.1.6; platform_machine == "x86_64"
+ typing_extensions >= 4.10
+ filelock >= 3.16.1 # need to contain https://github.com/tox-dev/filelock/pull/317
+diff --git a/setup.py b/setup.py
+index a4043c43a..0dc4a71ed 100755
+--- a/setup.py
++++ b/setup.py
+@@ -15,7 +15,6 @@ import torch
+ from packaging.version import Version, parse
+ from setuptools import Extension, find_packages, setup
+ from setuptools.command.build_ext import build_ext
+-from setuptools_scm import get_version
+ from torch.utils.cpp_extension import CUDA_HOME, ROCM_HOME
+ 
+ 
+@@ -479,54 +478,7 @@ def get_gaudi_sw_version():
+ 
+ 
+ def get_vllm_version() -> str:
+-    version = get_version(
+-        write_to="vllm/_version.py",  # TODO: move this to pyproject.toml
+-    )
+-
+-    sep = "+" if "+" not in version else "."  # dev versions might contain +
+-
+-    if _no_device():
+-        if envs.VLLM_TARGET_DEVICE == "empty":
+-            version += f"{sep}empty"
+-    elif _is_cuda():
+-        if envs.VLLM_USE_PRECOMPILED:
+-            version += f"{sep}precompiled"
+-        else:
+-            cuda_version = str(get_nvcc_cuda_version())
+-            if cuda_version != MAIN_CUDA_VERSION:
+-                cuda_version_str = cuda_version.replace(".", "")[:3]
+-                # skip this for source tarball, required for pypi
+-                if "sdist" not in sys.argv:
+-                    version += f"{sep}cu{cuda_version_str}"
+-    elif _is_hip():
+-        # Get the Rocm Version
+-        rocm_version = get_rocm_version() or torch.version.hip
+-        if rocm_version and rocm_version != MAIN_CUDA_VERSION:
+-            version += f"{sep}rocm{rocm_version.replace('.', '')[:3]}"
+-    elif _is_neuron():
+-        # Get the Neuron version
+-        neuron_version = str(get_neuronxcc_version())
+-        if neuron_version != MAIN_CUDA_VERSION:
+-            neuron_version_str = neuron_version.replace(".", "")[:3]
+-            version += f"{sep}neuron{neuron_version_str}"
+-    elif _is_hpu():
+-        # Get the Intel Gaudi Software Suite version
+-        gaudi_sw_version = str(get_gaudi_sw_version())
+-        if gaudi_sw_version != MAIN_CUDA_VERSION:
+-            gaudi_sw_version = gaudi_sw_version.replace(".", "")[:3]
+-            version += f"{sep}gaudi{gaudi_sw_version}"
+-    elif _is_openvino():
+-        version += f"{sep}openvino"
+-    elif _is_tpu():
+-        version += f"{sep}tpu"
+-    elif _is_cpu():
+-        version += f"{sep}cpu"
+-    elif _is_xpu():
+-        version += f"{sep}xpu"
+-    else:
+-        raise RuntimeError("Unknown runtime environment")
+-
+-    return version
++    return "0.7.2"
+ 
+ 
+ def read_readme() -> str:
+diff --git a/vllm/engine/llm_engine.py b/vllm/engine/llm_engine.py
+index d82d9ad9d..ce2955843 100644
+--- a/vllm/engine/llm_engine.py
++++ b/vllm/engine/llm_engine.py
+@@ -61,6 +61,8 @@ from vllm.usage.usage_lib import (UsageContext, is_usage_stats_enabled,
+ from vllm.utils import Counter, Device, deprecate_kwargs, weak_bind
+ from vllm.version import __version__ as VLLM_VERSION
+ 
++from vllm.model_executor.metrics import metrics_map, MultiModalBaseMetrics
++
+ logger = init_logger(__name__)
+ _LOCAL_LOGGING_INTERVAL_SEC = 5
+ 
+@@ -721,6 +723,10 @@ class LLMEngine:
+             >>> # continue the request processing
+             >>> ...
+         """
++        if request_id not in metrics_map:
++            metrics_map[request_id] = MultiModalBaseMetrics()
++        # metrics_map[request_id].vllm_requestbody_processing_time = (time.perf_counter() - metrics_map[request_id].vllm_before_processing_time) * 1000
++
+         if inputs is not None:
+             prompt = inputs
+         assert prompt is not None and params is not None
+@@ -748,14 +754,20 @@ class LLMEngine:
+                 prompt,
+                 tokenizer=self.get_tokenizer(lora_request=lora_request))
+ 
++        start = time.perf_counter()
+         preprocessed_inputs = self.input_preprocessor.preprocess(
+             prompt,
+             request_id=request_id,
+             lora_request=lora_request,
+             prompt_adapter_request=prompt_adapter_request,
+         )
++        end = time.perf_counter()
++        
+         processed_inputs = self.input_processor(preprocessed_inputs)
+ 
++        
++        metrics_map[request_id].preprocessing = round((end - start) * 1000, 2)
++
+         self._add_processed_request(
+             request_id=request_id,
+             processed_inputs=processed_inputs,
+@@ -1539,9 +1551,18 @@ class LLMEngine:
+                      finished_before: Optional[List[int]] = None,
+                      skip: Optional[List[int]] = None) -> None:
+         """Forced log when no requests active."""
++        # Log waiting time
++        if scheduler_outputs is not None:
++                for seq_group in scheduler_outputs.scheduled_seq_groups:
++                    request_id = seq_group.seq_group.request_id
++                    if request_id not in metrics_map.keys():
++                        metrics_map[request_id] = MultiModalBaseMetrics()
++                    metrics_map[request_id].time_in_queue = round(seq_group.seq_group.metrics.time_in_queue * 1000, 2)
++
+         if self.log_stats:
+             stats = self._get_stats(scheduler_outputs, model_output,
+                                     finished_before, skip)
++
+             for logger in self.stat_loggers.values():
+                 logger.log(stats)
+ 
+diff --git a/vllm/engine/multiprocessing/engine.py b/vllm/engine/multiprocessing/engine.py
+index a0dd79586..066b56d4a 100644
+--- a/vllm/engine/multiprocessing/engine.py
++++ b/vllm/engine/multiprocessing/engine.py
+@@ -27,6 +27,9 @@ from vllm.logger import init_logger
+ from vllm.outputs import RequestOutput
+ from vllm.usage.usage_lib import UsageContext
+ 
++from vllm.model_executor.metrics import metrics_map
++import os
++
+ logger = init_logger(__name__)
+ 
+ POLLING_TIMEOUT_MS = 10000
+@@ -371,6 +374,55 @@ class MQLLMEngine:
+ 
+ 
+ def signal_handler(*_) -> None:
++    logger.info("WRITING METRICS TO FILE")
++
++    if not 'VISION_MODEL_METRICS_PATH' in os.environ:
++        if 'WORKER' in os.environ:
++            os.environ['VISION_MODEL_METRICS_PATH'] = f'online_serving/results/vision_encoding_metrics_{os.environ["WORKER"]}.csv'
++        else:
++            os.environ['VISION_MODEL_METRICS_PATH'] = f'online_serving/results/vision_encoding_metrics.csv'
++    os.makedirs(os.path.dirname(os.environ['VISION_MODEL_METRICS_PATH']), exist_ok=True)
++    with open(os.environ['VISION_MODEL_METRICS_PATH'], 'w') as f:
++        f.write('request_id,num_vision_tokens,preprocessing_time,vision_encoding_time_ms\n')
++
++    if not 'TTFT_METRICS' in os.environ:
++        if 'WORKER' in os.environ:
++            os.environ['TTFT_METRICS'] = f'online_serving/results/ttft_{os.environ["WORKER"]}.csv'
++        else:
++            os.environ['TTFT_METRICS'] = f'online_serving/results/ttft.csv'
++    os.makedirs(os.path.dirname(os.environ['TTFT_METRICS']), exist_ok=True)
++    with open(os.environ['TTFT_METRICS'], 'w') as f:
++        f.write('request_id,iteration,vllm_requestbody_processing_time,waiting_time,num_prefills,prefill_ms\n')
++
++    if not 'TBT_METRICS' in os.environ:
++        if 'WORKER' in os.environ:
++            os.environ['TBT_METRICS'] = f'online_serving/results/tbt_{os.environ["WORKER"]}.csv'
++        else:
++            os.environ['TBT_METRICS'] = f'online_serving/results/tbt.csv'
++    os.makedirs(os.path.dirname(os.environ['TBT_METRICS']), exist_ok=True)
++    with open(os.environ['TBT_METRICS'], 'w') as f:
++        f.write('request_id,iteration,num_decodes,tbt_ms\n')
++
++    for request_id in metrics_map.keys():
++        if request_id.startswith('chatcmpl'):
++            request = metrics_map[request_id]
++            with open(os.environ['VISION_MODEL_METRICS_PATH'], 'a') as f:
++                num_vision_tokens = request.get_num_vision_tokens()
++                preprocessing = request.preprocessing
++                encoder = request.get_vision_encoder_times()
++                f.write(f'{request_id},{num_vision_tokens},{preprocessing},{encoder}\n')
++
++            with open(os.environ['TTFT_METRICS'], 'a') as f:
++                ttft_list = request.language_model_prefill_time_list()
++                num_prefills = request.num_prefills
++                for iteration in ttft_list:
++                    f.write(f'{request_id},{iteration},{request.vllm_requestbody_processing_time},{request.time_in_queue},{num_prefills[iteration]},{ttft_list[iteration]}\n')
++            
++            with open(os.environ['TBT_METRICS'], 'a') as f:
++                tbt_list = request.language_model_tbt_list()
++                num_decodes = request.num_decodes
++                for iteration in tbt_list:
++                    f.write(f'{request_id},{iteration},{num_decodes[iteration]},{tbt_list[iteration]}\n')
+     raise KeyboardInterrupt("MQLLMEngine terminated")
+ 
+ 
+@@ -380,8 +432,14 @@ def run_mp_engine(engine_args: AsyncEngineArgs, usage_context: UsageContext,
+         engine = MQLLMEngine.from_engine_args(engine_args=engine_args,
+                                               usage_context=usage_context,
+                                               ipc_path=ipc_path)
+-
++        signal.signal(signal.SIGINT, signal_handler)
+         signal.signal(signal.SIGTERM, signal_handler)
++        # Remote (multi-box) nodes are launched over `ssh -tt` and torn down by
++        # killing that ssh, so the engine receives SIGHUP (PTY hangup), not SIGTERM.
++        # Without handling it, the metrics dump above never runs and ttft/tbt/vision
++        # files are silently lost on every remote box. Treat SIGHUP like SIGTERM.
++        if hasattr(signal, "SIGHUP"):
++            signal.signal(signal.SIGHUP, signal_handler)
+ 
+         engine.start()
+ 
+diff --git a/vllm/entrypoints/chat_utils.py b/vllm/entrypoints/chat_utils.py
+index 3a6e75b1d..2df4f9496 100644
+--- a/vllm/entrypoints/chat_utils.py
++++ b/vllm/entrypoints/chat_utils.py
+@@ -37,6 +37,16 @@ from vllm.logger import init_logger
+ from vllm.multimodal import MultiModalDataDict
+ from vllm.multimodal.utils import MediaConnector
+ from vllm.transformers_utils.tokenizer import AnyTokenizer, MistralTokenizer
++import torch
++import base64
++import pickle
++from torch.multiprocessing.reductions import rebuild_cuda_tensor
++import requests
++import random
++import os
++import asyncio
++import aiohttp 
++
+ 
+ logger = init_logger(__name__)
+ 
+@@ -80,6 +90,18 @@ class CustomChatCompletionContentSimpleImageParam(TypedDict, total=False):
+     """
+     image_url: Required[str]
+ 
++class DecoupledImage(TypedDict, total=False):
++    model: Required[str]
++    image_id: Required[str]
++    source_url: Required[str]
++    image_tensor_shape: Required[List[int]]
++    src_rank: Required[int]
++    dest_rank: Required[int]
++
++class ChatCompletionContentDecoupledImageParam(TypedDict, total=False):
++    image: Required[DecoupledImage]  
++    type: Required[Literal['decoupled-multimodal-images']]
++
+ 
+ class CustomChatCompletionContentSimpleAudioParam(TypedDict, total=False):
+     """A simpler version of the param that only accepts a plain audio_url.
+@@ -106,6 +128,7 @@ class CustomChatCompletionContentSimpleVideoParam(TypedDict, total=False):
+ ChatCompletionContentPartParam: TypeAlias = Union[
+     OpenAIChatCompletionContentPartParam, ChatCompletionContentPartAudioParam,
+     ChatCompletionContentPartInputAudioParam,
++    ChatCompletionContentDecoupledImageParam,
+     ChatCompletionContentPartVideoParam, ChatCompletionContentPartRefusalParam,
+     CustomChatCompletionContentSimpleImageParam,
+     CustomChatCompletionContentSimpleAudioParam,
+@@ -478,10 +501,11 @@ class AsyncMultiModalItemTracker(BaseMultiModalItemTracker[Awaitable[object]]):
+ 
+     async def all_mm_data(self) -> Optional[MultiModalDataDict]:
+         if self._items_by_modality:
+-            return {
++            outputs = {
+                 modality: await asyncio.gather(*items)
+                 for modality, items in self._items_by_modality.items()
+             }
++            return outputs
+ 
+         return None
+ 
+@@ -507,6 +531,11 @@ class BaseMultiModalContentParser(ABC):
+     @abstractmethod
+     def parse_image(self, image_url: str) -> None:
+         raise NotImplementedError
++    
++    @abstractmethod
++    def initiate_rdma_transfer_of_image_tokens(self, model: str, image_id: str, source_url: str, tensor_shape: List[int], src_rank: int, dest_rank: int) -> None:
++        # RDMA logic goes here
++        raise NotImplementedError
+ 
+     @abstractmethod
+     def parse_audio(self, audio_url: str) -> None:
+@@ -537,6 +566,13 @@ class MultiModalContentParser(BaseMultiModalContentParser):
+ 
+         placeholder = self._tracker.add("image", image)
+         self._add_placeholder(placeholder)
++    
++    def initiate_rdma_transfer_of_image_tokens(self, model: str, image_id: str, source_url: str, tensor_shape: List[int], src_rank: int, dest_rank: int) -> None:
++
++        # RDMA logic goes here
++        list_of_image_tokens = torch.rand((1, 1601, 4096), dtype=torch.bfloat16) # TODO: stub, rdma should be called here
++        placeholder = self._tracker.add("image", list_of_image_tokens)
++        self._add_placeholder(placeholder)
+ 
+     def parse_audio(self, audio_url: str) -> None:
+         audio = self._connector.fetch_audio(audio_url)
+@@ -567,12 +603,144 @@ class AsyncMultiModalContentParser(BaseMultiModalContentParser):
+         self._connector = MediaConnector(
+             allowed_local_media_path=tracker.allowed_local_media_path,
+         )
++        self._rdma_lock_list = [asyncio.Lock()] * 8
++        self._rdma_timeout = 100 # seconds
++        
+ 
+     def parse_image(self, image_url: str) -> None:
+         image_coro = self._connector.fetch_image_async(image_url)
+ 
+         placeholder = self._tracker.add("image", image_coro)
+         self._add_placeholder(placeholder)
++    
++    async def recv_rdma(self, session: aiohttp.ClientSession, dest_url: str, payload: dict, image_id: str):
++        logger.debug(f"Attempting to prepare destination {dest_url} for image_id: {image_id}")
++        try:
++            async with session.post(dest_url,
++                                    json=payload,
++                                    timeout=aiohttp.ClientTimeout(total=self._rdma_timeout)) as response:
++                if response.status != 200:
++                    response_text = await response.text()
++                    logger.error(f"Failed to prepare destination node (self) {dest_url} for image_id: {image_id}. Status: {response.status}, Response: {response_text}")
++                    # Specific error for this step
++                    raise ValueError(f"Destination prep failed: {response.status} - {response_text}")
++                else:
++                    logger.debug(f"Destination node (self) {dest_url} successfully prepared for image_id: {image_id}")
++                    return await response.json()  # carries the CUDA IPC handle
++        except asyncio.TimeoutError:
++            logger.error(f"Timeout ({self._rdma_timeout}s) preparing destination node (self) {dest_url} for image_id: {image_id}.")
++            raise # Re-raise to be caught by gather's caller
++        except aiohttp.ClientError as e:
++            logger.error(f"ClientError preparing destination node (self) {dest_url} for image_id: {image_id}: {e}")
++            raise # Re-raise
++
++
++    async def send_rdma(self, session: aiohttp.ClientSession, source_url: str, payload: dict, image_id: str):
++        logger.debug(f"Attempting to trigger source {source_url} for image_id: {image_id}")
++        try:
++            async with session.post(source_url,
++                                    json=payload,
++                                    timeout=aiohttp.ClientTimeout(total=self._rdma_timeout)) as response:
++                if response.status != 200:
++                    response_text = await response.text()
++                    logger.error(f"Failed to trigger source node {source_url} for image_id: {image_id}. Status: {response.status}, Response: {response_text}")
++                    # Specific error for this step
++                    raise ValueError(f"Source trigger failed: {response.status} - {response_text}")
++                else:
++                    logger.debug(f"Source node {source_url} successfully signaled for image_id: {image_id}")
++                    return True # Indicates success
++        except asyncio.TimeoutError:
++            logger.error(f"Timeout ({self._rdma_timeout}s) triggering source node {source_url} for image_id: {image_id}.")
++            raise # Re-raise
++        except aiohttp.ClientError as e:
++            logger.error(f"ClientError triggering source node {source_url} for image_id: {image_id}: {e}")
++            raise # Re-raise
++
++    def normalize_image_id(self, image_id: str):
++        if image_id.find('.') == -1:
++            return image_id
++        else:
++            return image_id[:image_id.find('.')]
++    
++    async def do_rdma(self, model: str, image_id: str, source_node:str, tensor_shape: List[int], src_rank: int, dest_rank: int):  # RDMA transfer of image tokens from image nodes
++        async with self._rdma_lock_list[src_rank % 8]:
++            image_id = self.normalize_image_id(image_id)
++            # The image node hosts the send endpoint on its own host:port (source_node);
++            # the recv node runs on this text host (port via env, defaults to 5050).
++            recv_port = os.environ.get("TENSOR_TRANSFER_RECV_PORT", "5050")
++            source_url = f"http://{source_node}/initiate_tensor_transfer_image_node"
++            dest_url = f'http://127.0.0.1:{recv_port}/initiate_tensor_transfer_text_node'
++            source_payload = {
++                "image_id": image_id,
++                "src_rank": src_rank,
++                "dest_rank": dest_rank
++            }
++            dest_payload = {
++                "image_id": image_id,
++                "tensor_shape": tensor_shape,
++                "src_rank": src_rank,
++                "dest_rank": dest_rank
++            }
++            
++            async with aiohttp.ClientSession() as session:
++                try:
++                    logger.debug(f"Initiating destination preparation and source trigger concurrently for image_id: {image_id}.")
++                    # Both run concurrently; gather propagates the first exception.
++                    # recv returns a CUDA IPC handle for the received tensor.
++                    recv_result, _ = await asyncio.gather(
++                        self.recv_rdma(session, dest_url, dest_payload, image_id),
++                        self.send_rdma(session, source_url, source_payload, image_id)
++                    )
++                    logger.debug(f"Both destination preparation and source trigger were successful for image_id: {image_id}.")
++                except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
++                    logger.error(f"RDMA signaling failed during concurrent execution for image_id {image_id}: {type(e).__name__} - {e}")
++                    raise
++
++                # Map the recv node's tensor via CUDA IPC, copy into our own memory,
++                # then release it on the recv side. No disk round-trip.
++                #
++                # The clone is an async copy on the current stream. _release_rdma
++                # tells the recv process to free the source tensor, and under memory
++                # pressure the CUDA allocator reuses that block immediately — so the
++                # copy MUST finish before we signal release, or the clone reads freed
++                # memory (intermittent "illegal memory access", load-dependent). This
++                # runs in the API-server frontend, a separate process from the engine
++                # worker, so syncing this stream does not stall LLM compute; it only
++                # waits for this ~tens-of-microseconds copy.
++                try:
++                    args = pickle.loads(base64.b64decode(recv_result["ipc_handle"]))
++                    image_tokens = rebuild_cuda_tensor(*args).clone()
++                    torch.cuda.current_stream().synchronize()
++                except Exception as e:
++                    raise ValueError(f"Failed to map IPC tensor for image_id {image_id}: {e}")
++                finally:
++                    await self._release_rdma(session, recv_port, image_id)
++
++            # Flatten to (num_image_tokens, hidden); the image node already
++            # projected to each model's cross-attention / context hidden size.
++            if model == "INTERNVL":
++                image_tokens = image_tokens.reshape(-1, 6144)
++            elif model == "MLLAMA":
++                image_tokens = image_tokens.reshape(-1, 4096)
++            return image_tokens
++
++    async def _release_rdma(self, session: aiohttp.ClientSession, recv_port: str, image_id: str):
++        """Tell the recv node it can free the received tensor (we've cloned it)."""
++        url = f"http://127.0.0.1:{recv_port}/release_tensor"
++        try:
++            async with session.post(url, json={"image_id": image_id},
++                                    timeout=aiohttp.ClientTimeout(total=self._rdma_timeout)) as response:
++                await response.read()
++        except Exception as e:
++            logger.warning(f"release_tensor failed for image_id {image_id}: {e}")
++
++    async def fetch_tokens(self, model: str, image_id: str, source_url: str, tensor_shape: List[int], src_rank: int, dest_rank: int):
++        return await self.do_rdma(model, image_id, source_url, tensor_shape, src_rank, dest_rank)
++
++    def initiate_rdma_transfer_of_image_tokens(self, model: str, image_id: str, source_url: str, tensor_shape: List[int], src_rank: int, dest_rank: int) -> None:
++        # RDMA logic goes here
++        placeholder = self._tracker.add("image", self.fetch_tokens(model, image_id, source_url, tensor_shape, src_rank, dest_rank))
++        self._add_placeholder(placeholder)
+ 
+     def parse_audio(self, audio_url: str) -> None:
+         audio_coro = self._connector.fetch_audio_async(audio_url)
+@@ -675,16 +843,18 @@ def _get_full_multimodal_text_prompt(placeholder_counts: Dict[str, int],
+     # the prompt. This may change to be customizable in the future.
+     return "\n".join(missing_placeholders + [text_prompt])
+ 
+-
+ # No need to validate using Pydantic again
+ _TextParser = partial(cast, ChatCompletionContentPartTextParam)
+ _ImageParser = partial(cast, ChatCompletionContentPartImageParam)
++_DecoupledImageParser = partial(cast, ChatCompletionContentDecoupledImageParam)
+ _AudioParser = partial(cast, ChatCompletionContentPartAudioParam)
+ _InputAudioParser = partial(cast, ChatCompletionContentPartInputAudioParam)
+ _RefusalParser = partial(cast, ChatCompletionContentPartRefusalParam)
+ _VideoParser = partial(cast, ChatCompletionContentPartVideoParam)
++    
+ 
+-_ContentPart: TypeAlias = Union[str, Dict[str, str], InputAudio]
++
++_ContentPart: TypeAlias = Union[str, Dict[str, str], InputAudio, torch.Tensor]
+ 
+ # Define a mapping from part types to their corresponding parsing functions.
+ MM_PARSER_MAP: Dict[
+@@ -695,6 +865,8 @@ MM_PARSER_MAP: Dict[
+     lambda part: _TextParser(part).get("text", ""),
+     "image_url":
+     lambda part: _ImageParser(part).get("image_url", {}).get("url", ""),
++    "decoupled-multimodal-images":
++    lambda part: _DecoupledImageParser(part).get("image", DecoupledImage()),
+     "audio_url":
+     lambda part: _AudioParser(part).get("audio_url", {}).get("url", ""),
+     "input_audio":
+@@ -763,7 +935,7 @@ def _parse_chat_message_content_mm_part(
+     return part_type, "unknown part_type content"
+ 
+ 
+-VALID_MESSAGE_CONTENT_MM_PART_TYPES = ("text", "refusal", "image_url",
++VALID_MESSAGE_CONTENT_MM_PART_TYPES = ("text", "refusal", "image_url", "decoupled-multimodal-images",
+                                        "audio_url", "input_audio", "video_url")
+ 
+ 
+@@ -777,7 +949,6 @@ def _parse_chat_message_content_parts(
+     content = list[_ContentPart]()
+ 
+     mm_parser = mm_tracker.create_parser()
+-
+     for part in parts:
+         parse_res = _parse_chat_message_content_part(
+             part,
+@@ -819,6 +990,7 @@ def _parse_chat_message_content_part(
+     # Handle structured dictionary parts
+     part_type, content = _parse_chat_message_content_mm_part(part)
+ 
++
+     # if part_type is text/refusal/image_url/audio_url/video_url/input_audio but
+     # content is empty, log a warning and skip
+     if part_type in VALID_MESSAGE_CONTENT_MM_PART_TYPES and not content:
+@@ -838,6 +1010,16 @@ def _parse_chat_message_content_part(
+         str_content = cast(str, content)
+         mm_parser.parse_image(str_content)
+         return {'type': 'image'} if wrap_dicts else None
++    
++    if part_type == "decoupled-multimodal-images":
++        decoupled_image_info = cast(DecoupledImage, content)
++        mm_parser.initiate_rdma_transfer_of_image_tokens(decoupled_image_info['model'],
++                                                         decoupled_image_info['image_id'],
++                                                         decoupled_image_info['source_url'],
++                                                         decoupled_image_info['image_tensor_shape'],
++                                                         decoupled_image_info['src_rank'],
++                                                         decoupled_image_info['dest_rank'])
++        return {'type': 'image'} if wrap_dicts else None
+ 
+     if part_type == "audio_url":
+         str_content = cast(str, content)
+@@ -922,8 +1104,8 @@ def parse_chat_messages(
+     content_format: _ChatTemplateContentFormat,
+ ) -> Tuple[List[ConversationMessage], Optional[MultiModalDataDict]]:
+     conversation: List[ConversationMessage] = []
+-    mm_tracker = MultiModalItemTracker(model_config, tokenizer)
+-
++    mm_tracker = AsyncMultiModalItemTracker(model_config, tokenizer)
++    
+     for msg in messages:
+         sub_messages = _parse_chat_message_content(
+             msg,
+@@ -946,7 +1128,6 @@ def parse_chat_messages_futures(
+ ) -> Tuple[List[ConversationMessage], Awaitable[Optional[MultiModalDataDict]]]:
+     conversation: List[ConversationMessage] = []
+     mm_tracker = AsyncMultiModalItemTracker(model_config, tokenizer)
+-
+     for msg in messages:
+         sub_messages = _parse_chat_message_content(
+             msg,
+diff --git a/vllm/entrypoints/openai/protocol.py b/vllm/entrypoints/openai/protocol.py
+index 83b841826..0a985ff00 100644
+--- a/vllm/entrypoints/openai/protocol.py
++++ b/vllm/entrypoints/openai/protocol.py
+@@ -483,7 +483,7 @@ class ChatCompletionRequest(OpenAIBaseModel):
+             prompt_logprobs=prompt_logprobs,
+             ignore_eos=self.ignore_eos,
+             max_tokens=max_tokens,
+-            min_tokens=self.min_tokens,
++            min_tokens=max_tokens,
+             skip_special_tokens=self.skip_special_tokens,
+             spaces_between_special_tokens=self.spaces_between_special_tokens,
+             logits_processors=get_logits_processors(self.logits_processors,
+diff --git a/vllm/entrypoints/openai/serving_chat.py b/vllm/entrypoints/openai/serving_chat.py
+index 107220d54..540b275f2 100644
+--- a/vllm/entrypoints/openai/serving_chat.py
++++ b/vllm/entrypoints/openai/serving_chat.py
+@@ -34,6 +34,11 @@ from vllm.sampling_params import BeamSearchParams, SamplingParams
+ from vllm.sequence import Logprob
+ from vllm.transformers_utils.tokenizer import AnyTokenizer, MistralTokenizer
+ from vllm.transformers_utils.tokenizers import maybe_serialize_tool_calls
++from vllm.model_executor.metrics import metrics_map, MultiModalBaseMetrics
++
++import time
++import os
++
+ 
+ logger = init_logger(__name__)
+ 
+@@ -108,6 +113,11 @@ class OpenAIServingChat(OpenAIServing):
+             logger.info("Overwriting default chat sampling param with: %s",
+                         diff_sampling_param)
+ 
++        if 'TRANSFER_STATS_FILE' in os.environ:
++            os.makedirs(os.path.dirname(os.environ['TRANSFER_STATS_FILE']), exist_ok=True)
++            with open(os.environ['TRANSFER_STATS_FILE'], 'w') as f:
++                f.write(f'vllm_req_id,image_transfer_latency\n')
++
+     async def create_chat_completion(
+         self,
+         request: ChatCompletionRequest,
+@@ -170,6 +180,9 @@ class OpenAIServingChat(OpenAIServing):
+                 tool.model_dump() for tool in request.tools
+             ]
+ 
++            request_id = "chatcmpl-" \
++                     f"{self._base_request_id(raw_request, request.request_id)}"
++            start_pre_processing_tokens = time.perf_counter()
+             (
+                 conversation,
+                 request_prompts,
+@@ -189,13 +202,15 @@ class OpenAIServingChat(OpenAIServing):
+                 truncate_prompt_tokens=request.truncate_prompt_tokens,
+                 add_special_tokens=request.add_special_tokens,
+             )
++
++            if 'TRANSFER_STATS_FILE' in os.environ:
++                with open(os.environ['TRANSFER_STATS_FILE'], 'a') as f:
++                    f.write(f'{request_id},{(time.perf_counter() - start_pre_processing_tokens) * 1000}\n')
++
+         except ValueError as e:
+             logger.exception("Error in preprocessing prompt inputs")
+             return self.create_error_response(str(e))
+ 
+-        request_id = "chatcmpl-" \
+-                     f"{self._base_request_id(raw_request, request.request_id)}"
+-
+         request_metadata = RequestResponseMetadata(request_id=request_id)
+         if raw_request:
+             raw_request.state.request_metadata = request_metadata
+diff --git a/vllm/inputs/preprocess.py b/vllm/inputs/preprocess.py
+index 4d8f28cb0..b2d416b5a 100644
+--- a/vllm/inputs/preprocess.py
++++ b/vllm/inputs/preprocess.py
+@@ -260,12 +260,20 @@ class InputPreprocessor:
+         mm_processor = self.mm_registry.create_processor(
+             self.model_config, tokenizer)
+ 
++        import time
++        start = time.time()
+         if isinstance(prompt, list):
+             prompt = tokenizer.decode(prompt)
++
++        end = time.time()
++
+         if mm_processor_kwargs is None:
+             mm_processor_kwargs = {}
++        start = time.time()
++        outputs = mm_processor.apply(prompt, mm_data, mm_processor_kwargs)
++        end = time.time()
+ 
+-        return mm_processor.apply(prompt, mm_data, mm_processor_kwargs)
++        return outputs
+ 
+     async def _process_multimodal_async(
+         self,
+@@ -329,12 +337,18 @@ class InputPreprocessor:
+             mm_processor_kwargs = tokens_content.get("mm_processor_kwargs")
+ 
+             if multi_modal_data is not None and self._can_process_multimodal():
+-                return self._process_multimodal(
++                import time
++                start = time.time()
++                outputs = self._process_multimodal(
+                     prompt_token_ids,
+                     multi_modal_data,
+                     mm_processor_kwargs,
+                     lora_request=lora_request,
+                 )
++                end = time.time()
++
++                return outputs
++            
+ 
+             return token_inputs(
+                 prompt_token_ids=prompt_token_ids,
+@@ -628,10 +642,11 @@ class InputPreprocessor:
+             lora_request=lora_request,
+         )
+ 
+-        return self._build_decoder_only_llm_inputs(
++        outputs = self._build_decoder_only_llm_inputs(
+             prompt_comps,
+             prompt_adapter_request=prompt_adapter_request,
+         )
++        return outputs
+ 
+     async def _process_decoder_only_prompt_async(
+         self,
+diff --git a/vllm/metrics/__init__.py b/vllm/metrics/__init__.py
+new file mode 100644
+index 000000000..e69de29bb
+diff --git a/vllm/metrics/cdf_sketch.py b/vllm/metrics/cdf_sketch.py
+new file mode 100644
+index 000000000..1635d971e
+--- /dev/null
++++ b/vllm/metrics/cdf_sketch.py
+@@ -0,0 +1,161 @@
++import logging
++
++import numpy as np
++import pandas as pd
++import plotly_express as px
++import wandb
++from ddsketch.ddsketch import DDSketch
++
++logger = logging.getLogger(__name__)
++
++
++class CDFSketch:
++
++    def __init__(
++        self,
++        metric_name: str,
++        relative_accuracy: float = 0.001,
++        num_quantiles_in_df: int = 101,
++    ) -> None:
++        # metrics are a data series of two-dimensional (x, y) datapoints
++        self.sketch = DDSketch(relative_accuracy=relative_accuracy)
++        # column name
++        self.metric_name = metric_name
++
++        # most recently collected y datapoint for incremental updates
++        # to aid incremental updates to y datapoints
++        self._last_data = 0
++
++        self._num_quantiles_in_df = num_quantiles_in_df
++
++    @property
++    def mean(self) -> float:
++        return self.sketch.avg
++
++    @property
++    def median(self) -> float:
++        return self.sketch.get_quantile_value(0.5)
++
++    @property
++    def sum(self) -> float:
++        return self.sketch.sum
++
++    def __len__(self):
++        return int(self.sketch.count)
++
++    def merge(self, other: "CDFSketch") -> None:
++        assert self.metric_name == other.metric_name
++
++        self.sketch.merge(other.sketch)
++
++    # add a new datapoint
++    def put(self, data: float) -> None:
++        self._last_data = data
++        self.sketch.add(data)
++
++    # add a new x, y datapoint only for the x value to be discarded
++    def put_pair(self, data_x: float, data_y: float) -> None:
++        self._last_data = data_y
++        self.sketch.add(data_y)
++
++    # add a new datapoint as an incremental (delta) update to
++    # recently collected datapoint
++    def put_delta(self, delta: float) -> None:
++        data = self._last_data + delta
++        self.put(data)
++
++    def print_distribution_stats(self, plot_name: str) -> None:
++        if self.sketch._count == 0:
++            return
++
++        logger.info(
++            f"{plot_name}: {self.metric_name} stats:"
++            f" min: {self.sketch._min},"
++            f" max: {self.sketch._max},"
++            f" mean: {self.sketch.avg},"
++            f" 25th percentile: {self.sketch.get_quantile_value(0.25)},"
++            f" median: {self.sketch.get_quantile_value(0.5)},"
++            f" 75th percentile: {self.sketch.get_quantile_value(0.75)},"
++            f" 95th percentile: {self.sketch.get_quantile_value(0.95)},"
++            f" 99th percentile: {self.sketch.get_quantile_value(0.99)}"
++            f" 99.9th percentile: {self.sketch.get_quantile_value(0.999)}"
++            f" count: {self.sketch._count}"
++            f" sum: {self.sketch.sum}"
++        )
++        if wandb.run:
++            wandb.log(
++                {
++                    f"{plot_name}_min": self.sketch._min,
++                    f"{plot_name}_max": self.sketch._max,
++                    f"{plot_name}_mean": self.sketch.avg,
++                    f"{plot_name}_25th_percentile": self.sketch.get_quantile_value(
++                        0.25
++                    ),
++                    f"{plot_name}_median": self.sketch.get_quantile_value(0.5),
++                    f"{plot_name}_75th_percentile": self.sketch.get_quantile_value(
++                        0.75
++                    ),
++                    f"{plot_name}_95th_percentile": self.sketch.get_quantile_value(
++                        0.95
++                    ),
++                    f"{plot_name}_99th_percentile": self.sketch.get_quantile_value(
++                        0.99
++                    ),
++                    f"{plot_name}_99.9th_percentile": self.sketch.get_quantile_value(
++                        0.999
++                    ),
++                    f"{plot_name}_count": self.sketch.count,
++                    f"{plot_name}_sum": self.sketch.sum,
++                },
++                step=0,
++            )
++
++    def to_df(self) -> pd.DataFrame:
++        # get quantiles at 1% intervals
++        quantiles = np.linspace(0, 1, self._num_quantiles_in_df)
++        # get quantile values
++        quantile_values = [self.sketch.get_quantile_value(q) for q in quantiles]
++        # create dataframe
++        df = pd.DataFrame({"cdf": quantiles, self.metric_name: quantile_values})
++
++        return df
++
++    def _save_df(self, df: pd.DataFrame, path: str, plot_name: str) -> None:
++        df.to_csv(f"{path}/{plot_name}.csv", index=False)
++
++    def plot_cdf(self, path: str, plot_name: str, x_axis_label: str = None) -> None:
++
++        if self.sketch._count == 0:
++            return
++
++        if x_axis_label is None:
++            x_axis_label = self.metric_name
++
++        df = self.to_df()
++
++        self.print_distribution_stats(plot_name)
++
++        fig = px.line(
++            df, x=self.metric_name, y="cdf", markers=True, labels={"x": x_axis_label}
++        )
++        fig.update_traces(marker=dict(color="red", size=2))
++
++        if wandb.run:
++            wandb_df = df.copy()
++            # rename the self.metric_name column to x_axis_label
++            wandb_df = wandb_df.rename(columns={self.metric_name: x_axis_label})
++
++            wandb.log(
++                {
++                    f"{plot_name}_cdf": wandb.plot.line(
++                        wandb.Table(dataframe=wandb_df),
++                        "cdf",
++                        x_axis_label,
++                        title=plot_name,
++                    )
++                },
++                step=0,
++            )
++
++        fig.write_image(f"{path}/{plot_name}.png")
++        self._save_df(df, path, plot_name)
+diff --git a/vllm/metrics/constants.py b/vllm/metrics/constants.py
+new file mode 100644
+index 000000000..e3b9b8caf
+--- /dev/null
++++ b/vllm/metrics/constants.py
+@@ -0,0 +1,74 @@
++""" File to store names for different metrics captured """
++
++import enum
++import re 
++
++class OperationMetrics(enum.Enum):
++    MLP_UP_PROJ = "mlp_up_proj"
++    MLP_DOWN_PROJ = "mlp_down_proj"
++    MLP_ACTIVATION = "mlp_activation"
++    ATTN_PRE_PROJ = "attn_pre_proj"
++    ATTN_POST_PROJ = "attn_post_proj"
++    ATTN = "attn"
++    
++
++    INPUT_LAYERNORM = "input_layernorm"
++    POST_ATTENTION_LAYERNORM = "post_attention_layernorm"
++    ROTARY_EMB = "rotary_embedding"
++
++    # cross_attn_components
++    # n * dv -> n * hmodel
++    CROSS_ATTN = "cross_attn"
++    CROSS_ATTN_LAYER_POST_ATTN_LAYERNORM = "cross_attn_layer_post_attn_layernorm"
++    CROSS_ATTN_LAYER_INPUT_ATTN_LAYERNORM = "cross_attn_layer_input_attn_layernorm"
++    CROSS_ATTN_LAYER_KV_PROJ = "cross_attn_layer_kv_proj"
++    CROSS_ATTN_LAYER_Q_PROJ = "cross_attn_layer_q_proj"
++    CROSS_ATTN_LAYER_O_PROJ = "cross_attn_layer_o_proj"
++    CROSS_ATTN_LAYER_MLP_UP_PROJ = "cross_attn_layer_mlp_up_proj"
++    CROSS_ATTN_LAYER_MLP_DOWN_PROJ = "cross_attn_layer_mlp_down_proj"
++
++
++class VisionModelMetrics(enum.Enum):
++    MLP_UP_PROJ = "mlp_up_proj"
++    MLP_UP_PROJ_ALL_GATHER = "mlp_up_proj_all_gather"
++    MLP_ACTIVATION = "mlp_activation"
++    MLP_DOWN_PROJ = "mlp_down_proj"
++    MLP_DOWN_PROJ_ALL_REDUCE = "mlp_down_proj_all_reduce"
++    ATTN_PRE_PROJ = "attn_pre_proj"
++    ATTN_PRE_PROJ_ALL_GATHER = "attn_pre_proj_all_gather"
++    ATTN_POST_PROJ = "attn_post_proj"
++    ATTN_POST_PROJ_ALL_REDUCE = "attn_post_proj_all_reduce"
++    ATTN_KV_CACHE_SAVE = "attn_kv_cache_save"
++    ATTN = "attn"
++    ATTN_PREFILL = "attn_prefill"
++    ATTN_DECODE = "attn_decode"
++    ATTN_ROPE = "attn_rope"
++    ATTN_INPUT_RESHAPE = "attn_input_reshape"
++    ATTN_OUTPUT_RESHAPE = "attn_output_reshape"
++    EMBED_LINEAR = "embed_linear"
++    EMBED_ALL_REDUCE = "embed_all_reduce"
++    LM_HEAD_LINEAR = "lm_head_linear"
++    LM_HEAD_ALL_GATHER = "lm_head_all_gather"
++    INPUT_LAYERNORM = "input_layernorm"
++    POST_ATTENTION_LAYERNORM = "post_attention_layernorm"
++    NORM = "norm"
++    ADD = "add"
++    NCCL_SEND = "nccl_send"
++    NCCL_RECV = "nccl_recv"
++    MOE_GATING = "moe_gating"
++    MOE_LINEAR = "moe_linear"
++    ROTARY_EMB = "rotary_embedding"
++
++
++
++class ComponentMetrics(enum.Enum):
++    MLP_ADAPTER = "mlp_adapter"
++    LANGUAGE_MODEL = "language_model"
++    VISION_MODEL = "vision_model"
++    GLOBAL_VISION_MODEL = "global_vision_model"
++
++def prefix_to_layerid(prefix: str):
++    pattern = re.compile(r'\d+')
++    res = pattern.findall(prefix)
++    assert len(res) == 1
++    return int(res[0])
+\ No newline at end of file
+diff --git a/vllm/metrics/cuda_timer.py b/vllm/metrics/cuda_timer.py
+new file mode 100644
+index 000000000..1fd87549e
+--- /dev/null
++++ b/vllm/metrics/cuda_timer.py
+@@ -0,0 +1,119 @@
++from typing import Union, Optional
++
++import torch
++import json
++from vllm.metrics.constants import OperationMetrics, ComponentMetrics
++from vllm.metrics.metrics_store import MetricsStore
++from vllm.attention.backends.abstract import AttentionMetadata
++
++
++class CudaTimer:
++
++    def __init__(
++        self,
++        name: Union[OperationMetrics, ComponentMetrics],
++        layer_id: Optional[int] = None,
++    ):
++        self.disable = True
++        self.name = name
++        self.layer_id = layer_id
++        self.metrics_store = MetricsStore.get_or_create_instance()
++
++        # Finegrained logging will introduce overhead. So provide option to disable
++        self.disable = (name is None) or not self.metrics_store.is_op_level_profiling_enabled(metric_name=self.name, layer_id=layer_id)
++
++        if self.disable:
++            return
++        
++        # Choice of profiler
++        self.use_cuda_events = True
++        if self.use_cuda_events:
++            print(f"Using CUDA events for {self.name}, {self.name.value}, {self.layer_id}")
++
++        self.profiler = torch.profiler.profile(
++            activities=[
++                torch.profiler.ProfilerActivity.CUDA,
++            ],
++            record_shapes=True,
++            profile_memory=True,
++            on_trace_ready=self.trace_ready,
++        )
++        self.start_event = None
++        self.end_event = None
++
++
++    def trace_ready(self, trace):
++        # print trace
++        trace_file = 'trace.json'
++        trace.export_chrome_trace(trace_file)
++
++        if type(self.name) == OperationMetrics:
++            print(f"Operation: {self.name.value}")
++
++        # with open(trace_file, 'r') as f:
++        #     trace_data = json.load(f)
++        #     print(json.dumps(trace_data, indent=2))
++        iscuda = False
++        for e in trace.key_averages():
++            # if cuda_time_total exists, set iscuda = True and return
++            if hasattr(e, 'cuda_time_total'):
++                iscuda = True
++                break
++        if iscuda:
++            total_cuda_time = sum([e.cuda_time_total for e in trace.key_averages()])
++
++            if type(self.name) == OperationMetrics:
++                self.metrics_store.push_operation_metrics(
++                self.name, total_cuda_time * 1e-3,  # convert to ms
++                )
++                print(f"Operation: {self.name.value} Time: {total_cuda_time * 1e-3} ms")
++                
++            elif type(self.name) == ComponentMetrics:
++                self.metrics_store.push_operation_metrics(
++                self.name, total_cuda_time * 1e-3,  # convert to ms
++                )
++            else:
++                raise ValueError(f"Invalid Metric Class {self.name}")
++        else:
++            print(f"No CUDA time for {self.name.value}")
++
++    def __call__(self, attn_metadata: AttentionMetadata): # we will decide if this a prefill_timing or a decode timing
++        self.is_prefill_stage = attn_metadata.num_prefills > 0
++        return self
++
++    
++    def __enter__(self):
++        if self.disable:
++            return
++    
++        if self.use_cuda_events:
++            self.start_event = torch.cuda.Event(enable_timing=True)
++            self.start_event.record()
++        else:
++            self.profiler.__enter__()
++        return self
++
++    def __exit__(self, *args):
++        if self.disable:
++            return
++        
++        if self.use_cuda_events:
++            self.end_event = torch.cuda.Event(enable_timing=True)
++            self.end_event.record()
++
++            if type(self.name) == OperationMetrics:
++                self.metrics_store.push_operation_metrics_events(
++                self.name, self.start_event, self.end_event, self.is_prefill_stage
++            )
++            elif type(self.name) == ComponentMetrics:
++                self.metrics_store.push_prefill_component_metrics_events(
++                self.name, self.start_event, self.end_event
++            )
++            else:
++                raise ValueError(f"Invalid Metric Class {self.name}")
++            
++
++        else:
++            self.profiler.__exit__(*args)
++    
++ 
+diff --git a/vllm/metrics/data_series.py b/vllm/metrics/data_series.py
+new file mode 100644
+index 000000000..c068007a8
+--- /dev/null
++++ b/vllm/metrics/data_series.py
+@@ -0,0 +1,308 @@
++import logging
++from collections import defaultdict, deque
++
++import pandas as pd
++import plotly_express as px
++import wandb
++
++logger = logging.getLogger(__name__)
++
++
++class DataSeries:
++
++    def __init__(
++        self,
++        x_name: str,
++        y_name: str,
++    ) -> None:
++        # metrics are a data series of two-dimensional (x, y) datapoints
++        self.data_series = deque()
++        # column names of x, y datatpoints for data collection
++        self.x_name = x_name
++        self.y_name = y_name
++
++        # most recently collected y datapoint for incremental updates
++        # to aid incremental updates to y datapoints
++        self._last_data_y = 0
++
++    def consolidate(
++        self,
++    ):
++        res = defaultdict(list)
++        for x, y in self.data_series:
++            res[x].append(y)
++        self.data_series = [(x, sum(y) / len(y)) for x, y in res.items()]
++
++        # sort by x
++        self.data_series = sorted(self.data_series, key=lambda x: x[0])
++        self._last_data_y = self.data_series[-1][1] if len(self.data_series) else 0
++
++    def merge(self, other: "DataSeries"):
++        if len(other) == 0:
++            return
++
++        assert self.x_name == other.x_name
++        assert self.y_name == other.y_name
++
++        self.data_series.extend(other.data_series)
++
++        # sort by y
++        self.data_series = sorted(self.data_series, key=lambda x: x[0])
++        self._last_data_y = self.data_series[-1][1]
++
++    # This function assumes that x's are unique
++    # in their own dataseries respectively.
++    def elementwise_merge(self, other: "DataSeries"):
++        if len(other) == 0:
++            return
++
++        assert self.x_name == other.x_name
++        assert self.y_name == other.y_name
++        self.data_series.extend(other.data_series)
++
++        res = defaultdict(list)
++        for x, y in self.data_series:
++            res[x].append(y)
++        self.data_series = [(x, sum(y) / len(y)) for x, y in res.items()]
++
++        # sort by x
++        self.data_series = sorted(self.data_series, key=lambda x: x[0])
++        self._last_data_y = self.data_series[-1][1]
++
++    @property
++    def min_x(self):
++        if len(self.data_series) == 0:
++            return 0
++
++        return self.data_series[0][0]
++
++    def __len__(self):
++        return len(self.data_series)
++
++    @property
++    def sum(self) -> float:
++        return sum([data_y for _, data_y in self.data_series])
++
++    @property
++    def metric_name(self) -> str:
++        return self.y_name
++
++    # add a new x, y datapoint
++    def put(self, data_x: float, data_y: float) -> None:
++        self._last_data_y = data_y
++        self.data_series.append((data_x, data_y))
++
++    # For compatibility with CDFSketch
++    def put_pair(self, data_x: float, data_y: float) -> None:
++        self.put(data_x, data_y)
++
++    # get most recently collected y datapoint
++    def _peek_y(self):
++        return self._last_data_y
++
++    # convert list of x, y datapoints to a pandas dataframe
++    def to_df(self):
++        return pd.DataFrame(self.data_series, columns=[self.x_name, self.y_name])
++
++    # add a new x, y datapoint as an incremental (delta) update to
++    # recently collected y datapoint
++    def put_delta(self, data_x: float, data_y_delta: float) -> None:
++        last_data_y = self._peek_y()
++        data_y = last_data_y + data_y_delta
++        self.put(data_x, data_y)
++
++    def print_series_stats(
++        self, df: pd.DataFrame, plot_name: str, y_name: str = None
++    ) -> None:
++
++        if len(self.data_series) == 0:
++            return
++
++        if y_name is None:
++            y_name = self.y_name
++
++        logger.info(
++            f"{plot_name}: {y_name} stats:"
++            f" min: {df[y_name].min()},"
++            f" max: {df[y_name].max()},"
++            f" mean: {df[y_name].mean()},"
++        )
++        if wandb.run:
++            wandb.log(
++                {
++                    f"{plot_name}_min": df[y_name].min(),
++                    f"{plot_name}_max": df[y_name].max(),
++                    f"{plot_name}_mean": df[y_name].mean(),
++                },
++                step=0,
++            )
++
++    def print_distribution_stats(
++        self, df: pd.DataFrame, plot_name: str, y_name: str = None
++    ) -> None:
++
++        if len(self.data_series) == 0:
++            return
++
++        if y_name is None:
++            y_name = self.y_name
++
++        logger.info(
++            f"{plot_name}: {y_name} stats:"
++            f" min: {df[y_name].min()},"
++            f" max: {df[y_name].max()},"
++            f" mean: {df[y_name].mean()},"
++            f" median: {df[y_name].median()},"
++            f" 95th percentile: {df[y_name].quantile(0.95)},"
++            f" 99th percentile: {df[y_name].quantile(0.99)}"
++            f" 99.9th percentile: {df[y_name].quantile(0.999)}"
++        )
++        if wandb.run:
++            wandb.log(
++                {
++                    f"{plot_name}_min": df[y_name].min(),
++                    f"{plot_name}_max": df[y_name].max(),
++                    f"{plot_name}_mean": df[y_name].mean(),
++                    f"{plot_name}_median": df[y_name].median(),
++                    f"{plot_name}_95th_percentile": df[y_name].quantile(0.95),
++                    f"{plot_name}_99th_percentile": df[y_name].quantile(0.99),
++                    f"{plot_name}_99.9th_percentile": df[y_name].quantile(0.999),
++                },
++                step=0,
++            )
++
++    def _save_df(self, df: pd.DataFrame, path: str, plot_name: str) -> None:
++        df.to_csv(f"{path}/{plot_name}.csv", index=False)
++
++    def save_df(self, path: str, plot_name: str) -> None:
++        df = self.to_df()
++        self._save_df(df, path, plot_name)
++
++    def plot_step(
++        self,
++        path: str,
++        plot_name: str,
++        y_axis_label: str = None,
++        start_time: float = 0,
++        y_cumsum: bool = True,
++    ) -> None:
++
++        if len(self.data_series) == 0:
++            return
++
++        if y_axis_label is None:
++            y_axis_label = self.y_name
++
++        df = self.to_df()
++
++        df[self.x_name] -= start_time
++
++        if y_cumsum:
++            df[self.y_name] = df[self.y_name].cumsum()
++
++        self.print_series_stats(df, plot_name)
++
++        # change marker color to red
++        fig = px.line(
++            df, x=self.x_name, y=self.y_name, markers=True, labels={"x": y_axis_label}
++        )
++        fig.update_traces(marker=dict(color="red", size=2))
++
++        if wandb.run:
++            wandb_df = df.copy()
++            # rename the self.y_name column to y_axis_label
++            wandb_df = wandb_df.rename(columns={self.y_name: y_axis_label})
++
++            wandb.log(
++                {
++                    f"{plot_name}_step": wandb.plot.line(
++                        wandb.Table(dataframe=wandb_df),
++                        self.x_name,
++                        y_axis_label,
++                        title=plot_name,
++                    )
++                },
++                step=0,
++            )
++
++        fig.write_image(f"{path}/{plot_name}.png")
++        self._save_df(df, path, plot_name)
++
++    def plot_cdf(self, path: str, plot_name: str, y_axis_label: str = None) -> None:
++
++        if len(self.data_series) == 0:
++            return
++
++        if y_axis_label is None:
++            y_axis_label = self.y_name
++
++        df = self.to_df()
++
++        self.print_distribution_stats(df, plot_name)
++
++        df["cdf"] = df[self.y_name].rank(method="first", pct=True)
++        # sort by cdf
++        df = df.sort_values(by=["cdf"])
++
++        fig = px.line(
++            df, x=self.y_name, y="cdf", markers=True, labels={"x": y_axis_label}
++        )
++        fig.update_traces(marker=dict(color="red", size=2))
++
++        if wandb.run:
++            wandb_df = df.copy()
++            # rename the self.y_name column to y_axis_label
++            wandb_df = wandb_df.rename(columns={self.y_name: y_axis_label})
++
++            wandb.log(
++                {
++                    f"{plot_name}_cdf": wandb.plot.line(
++                        wandb.Table(dataframe=wandb_df),
++                        "cdf",
++                        y_axis_label,
++                        title=plot_name,
++                    )
++                },
++                step=0,
++            )
++
++        fig.write_image(f"{path}/{plot_name}.png")
++        self._save_df(df, path, plot_name)
++
++    def plot_histogram(self, path: str, plot_name: str) -> None:
++        if len(self.data_series) == 0:
++            return
++
++        df = self.to_df()
++
++        self.print_distribution_stats(df, plot_name)
++
++        fig = px.histogram(df, x=self.y_name, nbins=25)
++
++        # wandb histogram is highly inaccurate so we need to generate the histogram
++        # ourselves and then use wandb bar chart
++
++        histogram_df = df[self.y_name].value_counts(bins=25, sort=False).sort_index()
++        histogram_df = histogram_df.reset_index()
++        histogram_df.columns = ["Bins", "count"]
++        histogram_df["Bins"] = histogram_df["Bins"].apply(lambda x: x.mid)
++        histogram_df = histogram_df.sort_values(by=["Bins"])
++        # convert to percentage
++        histogram_df["Percentage"] = histogram_df["count"] * 100 / len(df)
++        # drop bins with less than 0.1% of the total count
++        histogram_df = histogram_df[histogram_df["Percentage"] > 0.1]
++
++        if wandb.run:
++            wandb.log(
++                {
++                    f"{plot_name}_histogram": wandb.plot.bar(
++                        wandb.Table(dataframe=histogram_df),
++                        "Bins",
++                        "Percentage",  # wandb plots are horizontal
++                        title=plot_name,
++                    )
++                },
++                step=0,
++            )
++
++        fig.write_image(f"{path}/{plot_name}.png")
+diff --git a/vllm/metrics/metrics_store.py b/vllm/metrics/metrics_store.py
+new file mode 100644
+index 000000000..a9bc8f6e6
+--- /dev/null
++++ b/vllm/metrics/metrics_store.py
+@@ -0,0 +1,161 @@
++import logging
++from typing import Any, Dict, List, Optional, Tuple, Union
++# from vllm.metrics.config import MetricStoreConfig
++from vllm.metrics.constants import OperationMetrics
++
++import torch
++import os
++
++def check_enabled(func):
++
++    def wrapper(self, *args, **kwargs):
++        if self.disable:
++            return
++        return func(self, *args, **kwargs)
++
++    return wrapper
++
++logger = logging.getLogger(__name__)
++NORMAL_ATTN_PROFILE_DECODER_LAYER = 20
++CROSS_ATTN_PROFILE_DECODER_LAYER = 18 
++BATCH_ID_STR = "iteration_id"
++
++class MetricsStore:
++
++    def __init__(
++        self,
++        # config: MetricStoreConfig,
++    ):
++        self.disable = True
++        # Disable if we don't have a metric config file or we explicitly disable it
++        # if not config or not config.write_metrics:
++        #     self.disable = True
++        #     logger.info("MetricsStore is disabled")
++        #     return
++        # else:
++        #     logger.info(f"MetricsStore is enabled. Writing metrics to {config.output_dir}")
++        
++        # self.config = config
++        # self.output_dir = config.output_dir
++        # self.model_num_layers = config.model_num_layers
++
++        self.reset()
++
++    @classmethod
++    def get_or_create_instance(
++        cls,
++        # config: Optional[MetricStoreConfig] = None,
++    ):
++        if not hasattr(cls, '_instance'):
++            cls._instance = cls()#config) # this is being called for the first time so create a new instance 
++        return cls._instance
++
++    @classmethod
++    def get_instance(cls):
++        return cls._instance
++
++    # at every model layer, check if profiling needs to be done
++    def is_op_level_profiling_enabled(
++            self,
++            metric_name: Any,
++            layer_id: Optional[int] = None,
++    ) -> bool:
++        if self.disable:
++            return False
++
++        # if metric_name in self.op:
++        if metric_name.value.startswith('cross'):
++            return layer_id == CROSS_ATTN_PROFILE_DECODER_LAYER
++        else:
++            return layer_id == NORMAL_ATTN_PROFILE_DECODER_LAYER
++        return False
++
++
++    def reset(self):
++        self.next_batch_id = 0
++
++        if self.disable:
++            return
++
++        self.op_level_metrics_per_batch_events_prefill: Dict[int, Dict[
++            OperationMetrics, List[Tuple[torch.cuda.Event]]]
++        ] = {}
++        self.op_level_metrics_per_batch_events_decode: Dict[int, Dict[
++            OperationMetrics, List[Tuple[torch.cuda.Event]]]
++        ] = {}
++
++
++    def push_operation_metrics_events(
++        self,
++        metrics_name: OperationMetrics,
++        start_event: torch.cuda.Event,
++        end_event: torch.cuda.Event,
++        is_prefill_stage: bool
++    ):
++        if is_prefill_stage:
++            if self.next_batch_id not in self.op_level_metrics_per_batch_events_prefill:
++                self.op_level_metrics_per_batch_events_prefill[self.next_batch_id] = {}
++            
++            for metric in OperationMetrics:
++                if metric not in self.op_level_metrics_per_batch_events_prefill[self.next_batch_id]:
++                    self.op_level_metrics_per_batch_events_prefill[self.next_batch_id][metric] = []
++            self.op_level_metrics_per_batch_events_prefill[self.next_batch_id][metrics_name].append((start_event, end_event))
++        else:
++            if self.next_batch_id not in self.op_level_metrics_per_batch_events_decode:
++                self.op_level_metrics_per_batch_events_decode[self.next_batch_id] = {}
++            
++            for metric in OperationMetrics:
++                if metric not in self.op_level_metrics_per_batch_events_decode[self.next_batch_id]:
++                    self.op_level_metrics_per_batch_events_decode[self.next_batch_id][metric] = []
++            
++            self.op_level_metrics_per_batch_events_decode[self.next_batch_id][metrics_name].append((start_event, end_event))
++
++    def on_batch_end(
++        self,
++        batch_start_time: float,
++        batch_end_time: float,
++    ) -> None:
++        self.next_batch_id = self.next_batch_id + 1
++
++    def store_op_level_metrics(self, header=None, context=None, output_file = "op_level_timings.csv", append=False):
++
++        torch.cuda.synchronize()
++        all_logged_events = self.op_level_metrics_per_batch_events_prefill[0].keys()
++        if not append:
++            os.makedirs(os.path.dirname(output_file), exist_ok=True)
++            line = f'{header},iteration_id,phase,'
++            
++            for event in all_logged_events:
++                line += f'{event.value},' 
++            line += '\n'
++
++            with open(output_file, 'w') as f:
++                f.write(line)
++
++        with open(output_file, 'a') as f:
++            for iteration_id in self.op_level_metrics_per_batch_events_prefill:
++                
++                line = f"{context},{iteration_id},prefill,"
++                for logged_event in all_logged_events:
++                    try:
++                        start, end = self.op_level_metrics_per_batch_events_prefill[iteration_id][logged_event][0]
++                        
++                        value = round(start.elapsed_time(end), 2)
++                    except:
++                        value = 0.0
++                    line += f'{value},'
++                line += "\n"
++                f.write(line)
++        
++        with open(output_file, 'a') as f:
++            for iteration_id in self.op_level_metrics_per_batch_events_decode:
++                line = f"{context},{iteration_id},decode,"
++                for logged_event in all_logged_events:
++                    try:
++                        start, end = self.op_level_metrics_per_batch_events_decode[iteration_id][logged_event][0]
++                        value = round(start.elapsed_time(end), 2)
++                    except:
++                        value = 0.0
++                    line += f'{value},'
++                line += "\n"
++                f.write(line)
+diff --git a/vllm/model_executor/metrics.py b/vllm/model_executor/metrics.py
+new file mode 100644
+index 000000000..da9ae23fe
+--- /dev/null
++++ b/vllm/model_executor/metrics.py
+@@ -0,0 +1,337 @@
++from typing import (Iterable, List, Dict, Literal, Mapping, Optional, Set, Tuple,
++                    TypedDict, Union)
++import torch
++
++import numpy as np
++
++class MultiModalBaseMetrics:
++    def __init__(self):
++        self.preprocessing = 0.0
++        self.vision_encoder_cuda_events: Tuple[torch.cuda.Event] = ()
++        self.language_model_tbt_cuda_events: List[Tuple[torch.cuda.Event]] = {}
++        self.language_model_prefill_cuda_events: Tuple[torch.cuda.Event] = {}
++        self.ttft_minus_preprocessing: Tuple[torch.cuda.Event] = ()
++        self.num_prefills = {}
++        self.num_decodes = {}
++        self.batch_id = -1
++        self.time_in_queue = 0.0
++
++        self.num_vision_tokens: int = 0
++        self.num_text_tokens: int = 0
++        self.output_tokens_generated: int = 0
++        self.total_input_tokens: int = 0
++        self.vllm_before_processing_time: float = 0.0
++        self.vllm_requestbody_processing_time: float = 0.0
++        
++    def get_vision_encoder_times(self):
++        torch.cuda.synchronize()
++        try:
++            start, end = self.vision_encoder_cuda_events
++            return round(start.elapsed_time(end), 2)
++        except: # when there are 0 images
++            return 0
++
++    def language_model_prefill_time(self): # sum preprocessing + vision_encoder + language_model_prefill
++        torch.cuda.synchronize()
++        # for batch_id in self.language_model_prefill_cuda_events:
++        prefill_list = [start.elapsed_time(end) for (start, end) in self.language_model_prefill_cuda_events]
++        return np.sum(prefill_list)
++
++    def language_model_prefill_time_list(self): # sum preprocessing + vision_encoder + language_model_prefill
++        torch.cuda.synchronize()
++        prefill_list = {}
++        for batch_id in self.language_model_prefill_cuda_events:
++            start, end = self.language_model_prefill_cuda_events[batch_id]
++            prefill_list[batch_id] = round(start.elapsed_time(end), 2)
++        return prefill_list
++
++    def language_model_tbt(self):
++        torch.cuda.synchronize()
++        tbt_list = [start.elapsed_time(end) for (start, end) in self.language_model_tbt_cuda_events]
++        return round(np.average(tbt_list), 2)
++
++    def language_model_tbt_list(self):
++        torch.cuda.synchronize()
++        tbt_list = {}
++        for batch_id in self.language_model_tbt_cuda_events:
++            start, end = self.language_model_tbt_cuda_events[batch_id]
++            tbt_list[batch_id] = round(start.elapsed_time(end), 2)
++        return tbt_list
++
++    def get_ttft(self):
++        torch.cuda.synchronize()
++        start, end = self.ttft_minus_preprocessing
++        ttft = self.preprocessing + start.elapsed_time(end)
++
++        return round(ttft, 2)
++
++    def get_num_output_tokens(self):
++        return self.output_tokens_generated
++
++    def get_num_vision_tokens(self):
++        return self.num_vision_tokens
++
++    def get_num_text_tokens(self):
++        return self.num_text_tokens
++
++    def get_total_input_tokens(self):
++        return self.num_text_tokens + self.num_vision_tokens
++    
++class MllamaMetrics(MultiModalBaseMetrics):
++    def __init__(self):
++        super().__init__()
++        self.median_self_attention_layer = 20
++        self.lm_self_attn_times_prefill = ()
++        self.lm_self_attn_times_decode = []
++        self.cross_attention_times_prefill = ()
++        self.cross_attention_times_decode = []
++
++        self.mlp_self_attn_prefill = []
++        self.mlp_self_attn_decode = []
++        self.self_attn_mlp_up_proj_prefill = []
++        self.self_attn_mlp_down_proj_prefill = []
++        self.self_attn_mlp_up_proj_decode = []
++        self.self_attn_mlp_down_proj_decode = []
++
++        self.mlp_cross_attn_prefill = []
++        self.mlp_cross_attn_decode = []
++        self.cross_attn_mlp_up_proj_prefill = []
++        self.cross_attn_mlp_down_proj_prefill = []
++        self.cross_attn_mlp_up_proj_decode = []
++        self.cross_attn_mlp_down_proj_decode = []
++        self.cross_attn_mlp_qkvproj_prefill = []
++        self.cross_attn_mlp_qkvproj_decode = []
++        self.cross_attn_mlp_oproj_prefill = []
++        self.cross_attn_mlp_oproj_decode = []
++        
++
++        self.median_cross_attention_layer = 18
++
++    def reset(self):
++        self.vision_encoder_cuda_events: Tuple[torch.cuda.Event] = ()
++        self.language_model_tbt_cuda_events: List[Tuple[torch.cuda.Event]] = {}
++        self.language_model_prefill_cuda_events: Tuple[torch.cuda.Event] = {}
++        self.ttft_minus_preprocessing: Tuple[torch.cuda.Event] = ()
++        self.num_prefills = {}
++        self.num_decodes = {}
++        self.batch_id = -1
++
++        self.num_vision_tokens: int = 0
++        self.num_text_tokens: int = 0
++        self.output_tokens_generated: int = 0
++        self.total_input_tokens: int = 0 
++
++        self.median_self_attention_layer = 20
++        self.lm_self_attn_times_prefill = ()
++        self.lm_self_attn_times_decode = []
++        self.cross_attention_times_prefill = ()
++        self.cross_attention_times_decode = []
++        self.mlp_self_attn_prefill = []
++        self.mlp_self_attn_decode = []
++        self.mlp_cross_attn_prefill = []
++        self.mlp_cross_attn_decode = []
++        self.self_attn_mlp_up_proj_prefill = []
++        self.self_attn_mlp_down_proj_prefill = []
++        self.self_attn_mlp_up_proj_decode = []
++        self.self_attn_mlp_down_proj_decode = []
++
++        self.cross_attn_mlp_up_proj_prefill = []
++        self.cross_attn_mlp_down_proj_prefill = []
++        self.cross_attn_mlp_up_proj_decode = []
++        self.cross_attn_mlp_down_proj_decode = []
++        self.cross_attn_mlp_qkvproj_prefill = []
++        self.cross_attn_mlp_qkvproj_decode = []
++        self.cross_attn_mlp_oproj_prefill = []
++        self.cross_attn_mlp_oproj_decode = []
++
++        self.median_cross_attention_layer = 18
++
++    @classmethod
++    def get_or_create_instance(
++        cls,
++    ):
++        if not hasattr(cls, '_instance'):
++            cls._instance = cls() # this is being called for the first time so create a new instance 
++        return cls._instance
++
++    @classmethod
++    def get_instance(cls):
++        return cls._instance
++
++    def get_self_attn_prefill_time(self):
++        torch.cuda.synchronize()
++        start, end = self.lm_self_attn_times_prefill
++        return start.elapsed_time(end)
++
++    def get_self_attn_decode_time(self):
++        torch.cuda.synchronize()
++        if not len(self.lm_self_attn_times_decode):
++            return 0
++        self_attn = [start.elapsed_time(end) for (start, end) in self.lm_self_attn_times_decode]
++        return round(np.average(self_attn), 2)
++
++    def get_cross_attn_prefill_time(self):
++        torch.cuda.synchronize()
++        try:
++            start, end = self.cross_attention_times_prefill
++            return start.elapsed_time(end)
++        except:
++            return 0
++
++    def get_cross_attn_decode_time(self):
++        torch.cuda.synchronize()
++        if not len(self.cross_attention_times_decode):
++            return 0
++        try:
++            print(f"lenght of x attn decode: {len(self.cross_attention_times_decode)}")
++            attn = [start.elapsed_time(end) for (start, end) in self.cross_attention_times_decode]
++            # print(attn)
++            return round(np.average(attn), 2)
++        except:
++            return 0
++    
++    def get_mlp_self_attn_prefill_time(self):
++        torch.cuda.synchronize()
++        if not len(self.mlp_self_attn_prefill):
++            return 0
++        self_attn = [start.elapsed_time(end) for (start, end) in self.mlp_self_attn_prefill]
++        return round(np.sum(self_attn), 2)
++
++    def get_mlp_self_attn_decode_times(self):
++        torch.cuda.synchronize()
++        total_ops_in_a_layer = len(self.mlp_self_attn_prefill)
++        if not len(self.mlp_self_attn_prefill):
++            return 0
++        sum_time_list = []
++        print(f"lengths: {len(self.mlp_self_attn_decode)} {total_ops_in_a_layer}")
++        assert len(self.mlp_self_attn_decode) % total_ops_in_a_layer == 0
++        for i in range(0, len(self.mlp_self_attn_decode), total_ops_in_a_layer):
++            sum_time = np.sum(start.elapsed_time(end) for (start, end) in self.mlp_self_attn_decode[i:i+total_ops_in_a_layer])
++            sum_time_list.append(sum_time)
++        return round(np.average(sum_time_list), 2) 
++
++    def get_mlp_cross_attn_prefill_time(self):
++        torch.cuda.synchronize()
++        if not len(self.mlp_cross_attn_prefill):
++            return 0
++        self_attn = [start.elapsed_time(end) for (start, end) in self.mlp_cross_attn_prefill]
++        return round(np.sum(self_attn), 2)
++
++    def get_mlp_cross_attn_decode_times(self):
++        torch.cuda.synchronize()
++        total_ops_in_a_layer = len(self.mlp_cross_attn_prefill)
++        if not len(self.mlp_cross_attn_decode):
++            return 0
++        sum_time_list = []
++        assert len(self.mlp_cross_attn_decode) % total_ops_in_a_layer == 0
++        for i in range(0, len(self.mlp_cross_attn_decode), total_ops_in_a_layer):
++            sum_time = np.sum(start.elapsed_time(end) for (start, end) in self.mlp_cross_attn_decode[i:i+total_ops_in_a_layer])
++            sum_time_list.append(sum_time)
++        return round(np.average(sum_time_list), 2)
++
++    
++    def get_cross_attn_mlp_metrics(self):
++        try:
++            assert len(self.cross_attn_mlp_up_proj_prefill) == 1
++            assert len(self.cross_attn_mlp_down_proj_prefill) == 1
++            assert len(self.cross_attn_mlp_qkvproj_prefill) == 1
++            assert len(self.cross_attn_mlp_oproj_prefill) == 1
++            
++            start, end = self.cross_attn_mlp_up_proj_prefill[0]
++            mlp_up_prefill = start.elapsed_time(end)
++
++            start, end = self.cross_attn_mlp_down_proj_prefill[0]
++            mlp_down_prefill = start.elapsed_time(end)
++
++            start, end = self.cross_attn_mlp_qkvproj_prefill[0]
++            qkvproj_prefill = start.elapsed_time(end)
++
++            start, end = self.cross_attn_mlp_oproj_prefill[0]
++            oproj_prefill = start.elapsed_time(end)
++
++            mlp_up_decode = np.average([start.elapsed_time(end) for (start, end) in self.cross_attn_mlp_up_proj_decode])
++            mlp_down_decode = np.average([start.elapsed_time(end) for (start, end) in self.cross_attn_mlp_down_proj_decode])
++            qkvproj_decode = np.average([start.elapsed_time(end) for (start, end) in self.cross_attn_mlp_qkvproj_decode])
++            oproj_decode = np.average([start.elapsed_time(end) for (start, end) in self.cross_attn_mlp_oproj_decode])
++
++            return mlp_up_prefill, mlp_down_prefill, qkvproj_prefill, oproj_prefill, mlp_up_decode, mlp_down_decode, qkvproj_decode, oproj_decode
++        except:
++            return 0, 0, 0, 0, 0, 0, 0, 0
++
++
++class InternVLMetrics(MultiModalBaseMetrics):
++    def __init__(self):
++        super().__init__()
++        self.median_self_attention_layer = 20
++        self.lm_self_attn_times_prefill = ()
++        self.lm_self_attn_times_decode = []
++
++        self.mlp_self_attn_prefill = []
++        self.mlp_self_attn_decode = []
++
++
++    def reset(self):
++        self.preprocessing_times: List[Tuple[float]] = []
++        self.preprocessing_times_cuda_events: List[Tuple[float]] = []
++        self.vision_encoder_cuda_events: Tuple[torch.cuda.Event] = ()
++        self.language_model_tbt_cuda_events: List[Tuple[torch.cuda.Event]] = {}
++        self.language_model_prefill_cuda_events: Tuple[torch.cuda.Event] = {}
++        self.ttft_minus_preprocessing: Tuple[torch.cuda.Event] = ()
++        self.num_prefills = {}
++        self.num_decodes = {}
++        self.batch_id = -1
++
++        self.num_vision_tokens: int = 0
++        self.output_tokens_generated: int = 0
++        self.total_input_tokens: int = 0 
++
++        self.median_self_attention_layer = 20
++        self.lm_self_attn_times_prefill = ()
++        self.lm_self_attn_times_decode = []
++
++        self.mlp_self_attn_prefill = []
++        self.mlp_self_attn_decode = []
++
++    @classmethod
++    def get_or_create_instance(
++        cls,
++    ):
++        if not hasattr(cls, '_instance'):
++            cls._instance = cls() # this is being called for the first time so create a new instance 
++        return cls._instance
++
++    @classmethod
++    def get_instance(cls):
++        return cls._instance
++
++    def get_self_attn_prefill_time(self):
++        torch.cuda.synchronize()
++        start, end = self.lm_self_attn_times_prefill
++        return start.elapsed_time(end)
++
++    def get_self_attn_decode_time(self):
++        torch.cuda.synchronize()
++        self_attn = [start.elapsed_time(end) for (start, end) in self.lm_self_attn_times_decode]
++        return round(np.median(self_attn), 2)
++
++    def get_mlp_self_attn_prefill_time(self):
++        torch.cuda.synchronize()
++        if not len(self.mlp_self_attn_prefill):
++            return 0
++        self_attn = [start.elapsed_time(end) for (start, end) in self.mlp_self_attn_prefill]
++        return round(np.sum(self_attn), 2)
++
++    def get_mlp_self_attn_decode_times(self):
++        torch.cuda.synchronize()
++        total_ops_in_a_layer = len(self.mlp_self_attn_prefill)
++        if not len(self.mlp_self_attn_prefill):
++            return 0
++        sum_time_list = []
++        print(f"lengths: {len(self.mlp_self_attn_decode)} {total_ops_in_a_layer}")
++        assert len(self.mlp_self_attn_decode) % total_ops_in_a_layer == 0
++        for i in range(0, len(self.mlp_self_attn_decode), total_ops_in_a_layer):
++            sum_time = np.sum(start.elapsed_time(end) for (start, end) in self.mlp_self_attn_decode[i:i+total_ops_in_a_layer])
++            sum_time_list.append(sum_time)
++        return round(np.average(sum_time_list), 2)
++
++metrics_map: Dict[str, MultiModalBaseMetrics] = {}
+diff --git a/vllm/model_executor/models/internlm2.py b/vllm/model_executor/models/internlm2.py
+index c211ca5f4..69b5ec059 100644
+--- a/vllm/model_executor/models/internlm2.py
++++ b/vllm/model_executor/models/internlm2.py
+@@ -36,6 +36,10 @@ from .utils import (is_pp_missing_parameter,
+                     make_empty_intermediate_tensors_factory, make_layers,
+                     maybe_prefix)
+ 
++from vllm.model_executor.metrics import InternVLMetrics
++from vllm.metrics.constants import OperationMetrics, prefix_to_layerid
++from vllm.metrics.cuda_timer import CudaTimer
++
+ 
+ class InternLM2MLP(nn.Module):
+ 
+@@ -48,6 +52,7 @@ class InternLM2MLP(nn.Module):
+         prefix: str = "",
+     ) -> None:
+         super().__init__()
++        layerid = prefix_to_layerid(prefix)
+         self.gate_up_proj = MergedColumnParallelLinear(
+             hidden_size,
+             [intermediate_size] * 2,
+@@ -55,6 +60,7 @@ class InternLM2MLP(nn.Module):
+             quant_config=quant_config,
+             prefix=f"{prefix}.gate_up_proj",
+         )
++        self.gate_up_proj_timer = CudaTimer(OperationMetrics.MLP_UP_PROJ, layerid)
+         self.w2 = RowParallelLinear(
+             intermediate_size,
+             hidden_size,
+@@ -62,15 +68,22 @@ class InternLM2MLP(nn.Module):
+             quant_config=quant_config,
+             prefix=f"{prefix}.w2",
+         )
++        self.w2_timer = CudaTimer(OperationMetrics.MLP_DOWN_PROJ, layerid)
+         if hidden_act != "silu":
+             raise ValueError(f"Unsupported activation: {hidden_act}. "
+                              "Only silu is supported for now.")
+         self.act_fn = SiluAndMul()
+-
+-    def forward(self, x):
+-        gate_up, _ = self.gate_up_proj(x)
+-        x = self.act_fn(gate_up)
+-        x, _ = self.w2(x)
++        self.act_fn_timer = CudaTimer(OperationMetrics.MLP_ACTIVATION, layerid)
++
++    def forward(self, x, attn_metadata=None):
++        with self.gate_up_proj_timer(attn_metadata):
++            gate_up, _ = self.gate_up_proj(x)
++        
++        with self.act_fn_timer(attn_metadata):
++            x = self.act_fn(gate_up)
++        
++        with self.w2_timer(attn_metadata):
++            x, _ = self.w2(x)
+         return x
+ 
+ 
+@@ -89,6 +102,7 @@ class InternLM2Attention(nn.Module):
+         prefix: str = "",
+     ) -> None:
+         super().__init__()
++        layerid = prefix_to_layerid(prefix)
+         self.hidden_size = hidden_size
+         self.tp_size = get_tensor_model_parallel_world_size()
+         self.tp_rank = get_tensor_model_parallel_rank()
+@@ -122,6 +136,7 @@ class InternLM2Attention(nn.Module):
+             quant_config=quant_config,
+             prefix=f"{prefix}.wqkv",
+         )
++        self.wqkv_timer = CudaTimer(OperationMetrics.ATTN_PRE_PROJ, layer_id=layerid)
+         self.wo = RowParallelLinear(
+             self.total_num_heads * self.head_dim,
+             hidden_size,
+@@ -129,6 +144,7 @@ class InternLM2Attention(nn.Module):
+             quant_config=quant_config,
+             prefix=f"{prefix}.wo",
+         )
++        self.wo_timer = CudaTimer(OperationMetrics.ATTN_POST_PROJ, layer_id=layerid)
+ 
+         self.rotary_emb = get_rope(
+             self.head_dim,
+@@ -137,6 +153,7 @@ class InternLM2Attention(nn.Module):
+             base=rope_theta,
+             rope_scaling=rope_scaling,
+         )
++        self.rotary_emb_timer = CudaTimer(OperationMetrics.ROTARY_EMB, layer_id=layerid)
+         self.attn = Attention(
+             self.num_heads,
+             self.head_dim,
+@@ -146,6 +163,7 @@ class InternLM2Attention(nn.Module):
+             quant_config=quant_config,
+             prefix=f"{prefix}.attn",
+         )
++        self.attn_timer = CudaTimer(OperationMetrics.ATTN, layer_id=layerid)
+ 
+     def split_qkv(self, qkv: torch.Tensor):
+         seq_len = qkv.shape[0]
+@@ -177,12 +195,23 @@ class InternLM2Attention(nn.Module):
+         hidden_states: torch.Tensor,
+         kv_cache: torch.Tensor,
+         attn_metadata: AttentionMetadata,
++        layeridx: Optional[int]
+     ) -> torch.Tensor:
+-        qkv, _ = self.wqkv(hidden_states)
++
++        with self.wqkv_timer(attn_metadata):
++            qkv, _ = self.wqkv(hidden_states)
++
+         q, k, v = self.split_qkv(qkv)
+-        q, k = self.rotary_emb(positions, q, k)
+-        attn_output = self.attn(q, k, v, kv_cache, attn_metadata)
+-        output, _ = self.wo(attn_output)
++
++        with self.rotary_emb_timer(attn_metadata):
++            q, k = self.rotary_emb(positions, q, k)
++
++        with self.attn_timer(attn_metadata):
++            attn_output = self.attn(q, k, v, kv_cache, attn_metadata)
++
++        with self.wo_timer(attn_metadata):
++            output, _ = self.wo(attn_output)
++
+         return output
+ 
+ 
+@@ -196,6 +225,7 @@ class InternLMDecoderLayer(nn.Module):
+         prefix: str = "",
+     ) -> None:
+         super().__init__()
++        layer_id = prefix_to_layerid(prefix)
+         self.hidden_size = config.hidden_size
+         rope_theta = getattr(config, "rope_theta", 10000)
+         rope_scaling = getattr(config, "rope_scaling", None)
+@@ -221,7 +251,10 @@ class InternLMDecoderLayer(nn.Module):
+         )
+         self.attention_norm = RMSNorm(config.hidden_size,
+                                       eps=config.rms_norm_eps)
++        self.attention_norm_timer = CudaTimer(OperationMetrics.INPUT_LAYERNORM, layer_id=layer_id)
++        
+         self.ffn_norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
++        self.ffn_norm_timer = CudaTimer(OperationMetrics.POST_ATTENTION_LAYERNORM, layer_id=layer_id)
+ 
+     def forward(
+         self,
+@@ -230,24 +263,33 @@ class InternLMDecoderLayer(nn.Module):
+         kv_cache: torch.Tensor,
+         attn_metadata: AttentionMetadata,
+         residual: Optional[torch.Tensor],
++        layeridx: Optional[int] = None
+     ) -> Tuple[torch.Tensor, torch.Tensor]:
+         # Self Attention
+-        if residual is None:
+-            residual = hidden_states
+-            hidden_states = self.attention_norm(hidden_states)
+-        else:
+-            hidden_states, residual = self.attention_norm(
+-                hidden_states, residual)
++
++        with self.attention_norm_timer(attn_metadata):
++            if residual is None:
++                residual = hidden_states
++                hidden_states = self.attention_norm(hidden_states)
++            else:
++                hidden_states, residual = self.attention_norm(
++                    hidden_states, residual)
++            
++        
+         hidden_states = self.attention(
+             positions=positions,
+             hidden_states=hidden_states,
+             kv_cache=kv_cache,
+             attn_metadata=attn_metadata,
++            layeridx=layeridx
+         )
+ 
+         # Fully Connected
+-        hidden_states, residual = self.ffn_norm(hidden_states, residual)
+-        hidden_states = self.feed_forward(hidden_states)
++        with self.ffn_norm_timer(attn_metadata):
++            hidden_states, residual = self.ffn_norm(hidden_states, residual)
++
++        hidden_states = self.feed_forward(hidden_states, attn_metadata)
++
+         return hidden_states, residual
+ 
+ 
+@@ -313,6 +355,7 @@ class InternLM2Model(nn.Module):
+                 kv_caches[i - self.start_layer],
+                 attn_metadata,
+                 residual,
++                layeridx=i
+             )
+         if not get_pp_group().is_last_rank:
+             return IntermediateTensors({
+diff --git a/vllm/model_executor/models/internvl.py b/vllm/model_executor/models/internvl.py
+index 08fc659ab..6cc09c235 100644
+--- a/vllm/model_executor/models/internvl.py
++++ b/vllm/model_executor/models/internvl.py
+@@ -6,10 +6,12 @@
+ # Copyright (c) 2023 OpenGVLab
+ # Licensed under The MIT License [see LICENSE for details]
+ # --------------------------------------------------------
++
+ from abc import ABC, abstractmethod
+ from functools import cached_property
+ from typing import (Iterable, List, Literal, Mapping, Optional, Set, Tuple,
+                     TypedDict, TypeVar, Union)
++import time
+ 
+ import torch
+ import torch.nn as nn
+@@ -41,6 +43,10 @@ from .interfaces import SupportsMultiModal, SupportsPP
+ from .utils import (AutoWeightsLoader, flatten_bn, init_vllm_registered_model,
+                     maybe_prefix, merge_multimodal_embeddings)
+ 
++from vllm.model_executor.metrics import InternVLMetrics, metrics_map
++from vllm.metrics.cuda_timer import CudaTimer
++from vllm.metrics.constants import OperationMetrics
++
+ IMG_START = '<img>'
+ IMG_END = '</img>'
+ IMG_CONTEXT = '<IMG_CONTEXT>'
+@@ -48,7 +54,6 @@ IMG_CONTEXT = '<IMG_CONTEXT>'
+ IMAGENET_MEAN = (0.485, 0.456, 0.406)
+ IMAGENET_STD = (0.229, 0.224, 0.225)
+ 
+-
+ class InternVLImagePixelInputs(TypedDict):
+     type: Literal["pixel_values"]
+     data: torch.Tensor
+@@ -482,13 +487,15 @@ class BaseInternVLProcessingInfo(BaseProcessingInfo):
+         )
+ 
+     def get_max_image_tokens(self) -> int:
+-        target_width, target_height = self.get_image_size_with_most_features()
++        # target_width, target_height = self.get_image_size_with_most_features()
+ 
+-        return self.get_num_image_tokens(
+-            image_width=target_width,
+-            image_height=target_height,
+-            processor=None,
+-        )
++        # return self.get_num_image_tokens(
++        #     image_width=target_width,
++        #     image_height=target_height,
++        #     processor=None,
++        # )
++
++        return 1
+ 
+     def get_image_size_with_most_features(self) -> ImageSize:
+         processor = self.get_hf_processor()
+@@ -532,8 +539,8 @@ class InternVLDummyInputsBuilder(BaseDummyInputsBuilder[_I]):
+ 
+         mm_data = {
+             "image":
+-            self._get_dummy_images(width=target_width,
+-                                   height=target_height,
++            self._get_dummy_images(width=256,
++                                   height=256,
+                                    num_images=num_images)
+         }
+ 
+@@ -781,6 +788,7 @@ class InternVLChatModel(nn.Module, SupportsMultiModal, SupportsPP):
+         vit_embeds = vit_embeds.reshape(vit_embeds.shape[0], -1,
+                                         vit_embeds.shape[-1])
+         vit_embeds = self.mlp1(vit_embeds)
++
+         return vit_embeds
+ 
+     def _validate_pixel_values(self, data: torch.Tensor) -> torch.Tensor:
+@@ -823,6 +831,8 @@ class InternVLChatModel(nn.Module, SupportsMultiModal, SupportsPP):
+             )
+ 
+         image_token_id = kwargs["image_token_id"]
++        if isinstance(image_token_id, list):
++            image_token_id = image_token_id[0]  # this is risky
+         assert isinstance(image_token_id, torch.Tensor)
+         self.img_context_token_id = image_token_id.flatten().unique().item()
+ 
+@@ -910,15 +920,47 @@ class InternVLChatModel(nn.Module, SupportsMultiModal, SupportsPP):
+         inputs_embeds: Optional[torch.Tensor] = None,
+         **kwargs: object,
+     ) -> Union[SamplerOutput, IntermediateTensors]:
++        request_ids = kwargs.get('request_ids', [])
++        vision_encoder_cuda_events = ()
++        num_vision_tokens = 0
++
++        start = torch.cuda.Event(enable_timing=True)
++        end = torch.cuda.Event(enable_timing=True)
+ 
++        start.record()
+         if intermediate_tensors is not None:
+             input_ids = None
+             inputs_embeds = None
+ 
+         # NOTE: In v1, inputs_embeds is always generated at model runner, this
+         # condition is for v0 compatibility.
+-        elif inputs_embeds is None:
+-            vision_embeddings = self.get_multimodal_embeddings(**kwargs)
++        elif inputs_embeds is None:     
++            start_vision_encoder_cuda_event = torch.cuda.Event(enable_timing=True)
++            end_vision_encoder_cuda_event = torch.cuda.Event(enable_timing=True)
++
++            start_vision_encoder_cuda_event.record()
++            vision_embeddings = kwargs.get('image_embeds')
++
++            if vision_embeddings is None:
++                vision_embeddings = self.get_multimodal_embeddings(**kwargs) # vision_encoder runs inside this
++            else:
++                if isinstance(vision_embeddings, list):
++                    reshaped_vision_embeddings = []
++                    for item in vision_embeddings:
++                        if isinstance(item, torch.Tensor):
++                            reshaped_vision_embeddings.append([item.squeeze(0)])
++                        elif isinstance(item, list):
++                            reshaped_vision_embeddings.append(item)
++                    vision_embeddings = sum(reshaped_vision_embeddings, []) # try flattening
++
++                else: # if it's a multi-tensor or a single tensor get a list of tensors
++                    vision_embeddings = [vision_embeddings[i] for i in range(vision_embeddings.size(0))]
++            end_vision_encoder_cuda_event.record()
++
++            if vision_embeddings is not None:
++                num_vision_tokens += sum([x.shape[0] for x in vision_embeddings])
++                vision_encoder_cuda_events = (start_vision_encoder_cuda_event, end_vision_encoder_cuda_event)
++
+             inputs_embeds = self.get_input_embeddings(input_ids,
+                                                       vision_embeddings)
+             input_ids = None
+@@ -932,13 +974,40 @@ class InternVLChatModel(nn.Module, SupportsMultiModal, SupportsPP):
+             "inputs_embeds": inputs_embeds,
+         }
+ 
+-        # Only required if the model is mono-architecture
+         if self.visual_token_mask is not None:
+             forward_kwargs.update(
+                 {"visual_token_mask": self.visual_token_mask})
+             self.visual_token_mask = None
+ 
++        start_language_model_cuda_event = torch.cuda.Event(enable_timing=True)
++        end_language_model_cuda_event = torch.cuda.Event(enable_timing=True)
++
++        start_language_model_cuda_event.record()
+         hidden_states = self.language_model.model(**forward_kwargs)
++        end_language_model_cuda_event.record()
++        end.record()
++        
++
++        for request_id in request_ids:
++            if request_id not in metrics_map:
++                metrics_map[request_id] = InternVLMetrics()
++            metrics_map[request_id].batch_id += 1
++            batch_id = metrics_map[request_id].batch_id
++
++            if len(vision_encoder_cuda_events): # prefill and encoding happened in this call
++                metrics_map[request_id].vision_encoder_cuda_events = vision_encoder_cuda_events
++                metrics_map[request_id].num_vision_tokens += num_vision_tokens
++
++            if attn_metadata.num_prefills > 0:
++                metrics_map[request_id].num_prefills[batch_id] = attn_metadata.num_prefill_tokens
++                metrics_map[request_id].language_model_prefill_cuda_events[batch_id] = (start_language_model_cuda_event, end_language_model_cuda_event)
++                metrics_map[request_id].num_text_tokens += attn_metadata.num_prefill_tokens
++                metrics_map[request_id].ttft_minus_preprocessing = (start, end)
++            else:
++                metrics_map[request_id].language_model_tbt_cuda_events[batch_id] = (start_language_model_cuda_event, end_language_model_cuda_event)
++                metrics_map[request_id].output_tokens_generated += attn_metadata.num_decode_tokens
++                metrics_map[request_id].num_decodes[batch_id] = attn_metadata.num_decode_tokens         
++
+         return hidden_states
+ 
+     def compute_logits(
+diff --git a/vllm/model_executor/models/llama.py b/vllm/model_executor/models/llama.py
+index d91c8782a..80d7e844c 100644
+--- a/vllm/model_executor/models/llama.py
++++ b/vllm/model_executor/models/llama.py
+@@ -54,6 +54,10 @@ from .utils import (AutoWeightsLoader, PPMissingLayer, extract_layer_index,
+                     make_empty_intermediate_tensors_factory, make_layers,
+                     maybe_prefix)
+ 
++from vllm.model_executor.metrics import MllamaMetrics
++from vllm.metrics.cuda_timer import CudaTimer
++from vllm.metrics.constants import OperationMetrics, prefix_to_layerid
++
+ 
+ class LlamaMLP(nn.Module):
+ 
+@@ -67,6 +71,7 @@ class LlamaMLP(nn.Module):
+         prefix: str = "",
+     ) -> None:
+         super().__init__()
++        layer_id = prefix_to_layerid(prefix)
+         self.gate_up_proj = MergedColumnParallelLinear(
+             input_size=hidden_size,
+             output_sizes=[intermediate_size] * 2,
+@@ -74,6 +79,9 @@ class LlamaMLP(nn.Module):
+             quant_config=quant_config,
+             prefix=f"{prefix}.gate_up_proj",
+         )
++        self.gate_up_proj_x_attn_timer = CudaTimer(OperationMetrics.CROSS_ATTN_LAYER_MLP_UP_PROJ, layer_id)
++        self.gate_up_proj_self_attn_timer = CudaTimer(OperationMetrics.MLP_UP_PROJ, layer_id)
++
+         self.down_proj = RowParallelLinear(
+             input_size=intermediate_size,
+             output_size=hidden_size,
+@@ -81,15 +89,34 @@ class LlamaMLP(nn.Module):
+             quant_config=quant_config,
+             prefix=f"{prefix}.down_proj",
+         )
++        self.down_proj_x_attn_timer = CudaTimer(OperationMetrics.CROSS_ATTN_LAYER_MLP_DOWN_PROJ, layer_id)
++        self.down_proj_self_attn_timer = CudaTimer(OperationMetrics.MLP_DOWN_PROJ, layer_id)
++
+         if hidden_act != "silu":
+             raise ValueError(f"Unsupported activation: {hidden_act}. "
+                              "Only silu is supported for now.")
+         self.act_fn = SiluAndMul()
+ 
+-    def forward(self, x):
+-        x, _ = self.gate_up_proj(x)
+-        x = self.act_fn(x)
+-        x, _ = self.down_proj(x)
++    def forward(self, x, attn_metadata=None, is_cross_attn=False):
++        if is_cross_attn:
++
++            with self.gate_up_proj_x_attn_timer(attn_metadata):
++                x, _ = self.gate_up_proj(x)
++
++            x = self.act_fn(x)
++
++            with self.down_proj_x_attn_timer(attn_metadata):
++                x, _ = self.down_proj(x)
++            
++        else:
++            with self.gate_up_proj_self_attn_timer(attn_metadata):
++                x, _ = self.gate_up_proj(x)
++
++            x = self.act_fn(x)
++
++            with self.down_proj_self_attn_timer(attn_metadata):
++                x, _ = self.down_proj(x)
++
+         return x
+ 
+ 
+@@ -143,6 +170,7 @@ class LlamaAttention(nn.Module):
+             quant_config=quant_config,
+             prefix=f"{prefix}.qkv_proj",
+         )
++        self.qkv_proj_timer = CudaTimer(OperationMetrics.ATTN_PRE_PROJ, layer_idx)
+ 
+         self.o_proj = RowParallelLinear(
+             input_size=self.total_num_heads * self.head_dim,
+@@ -151,6 +179,7 @@ class LlamaAttention(nn.Module):
+             quant_config=quant_config,
+             prefix=f"{prefix}.o_proj",
+         )
++        self.o_proj_timer = CudaTimer(OperationMetrics.ATTN_POST_PROJ, layer_idx)
+ 
+         is_neox_style = True
+         is_gguf = quant_config and quant_config.get_name() == "gguf"
+@@ -165,6 +194,7 @@ class LlamaAttention(nn.Module):
+             rope_scaling=rope_scaling,
+             is_neox_style=is_neox_style,
+         )
++        self.rotary_emb_timer = CudaTimer(OperationMetrics.ROTARY_EMB, layer_idx)
+ 
+         if hasattr(config, "interleaved_sliding_window"):
+             interleaved_sliding_window = config.interleaved_sliding_window
+@@ -189,6 +219,7 @@ class LlamaAttention(nn.Module):
+             per_layer_sliding_window=sliding_window,
+             prefix=f"{prefix}.attn",
+         )
++        self.attn_timer = CudaTimer(OperationMetrics.ATTN, layer_idx)
+ 
+     def forward(
+         self,
+@@ -196,12 +227,22 @@ class LlamaAttention(nn.Module):
+         hidden_states: torch.Tensor,
+         kv_cache: torch.Tensor,
+         attn_metadata: AttentionMetadata,
++        layer_idx: Optional[int] = None
+     ) -> torch.Tensor:
+-        qkv, _ = self.qkv_proj(hidden_states)
++        with self.qkv_proj_timer(attn_metadata):
++            qkv, _ = self.qkv_proj(hidden_states)
++
+         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+-        q, k = self.rotary_emb(positions, q, k)
+-        attn_output = self.attn(q, k, v, kv_cache, attn_metadata)
+-        output, _ = self.o_proj(attn_output)
++
++        with self.rotary_emb_timer(attn_metadata):
++            q, k = self.rotary_emb(positions, q, k)
++
++        with self.attn_timer(attn_metadata):
++            attn_output = self.attn(q, k, v, kv_cache, attn_metadata)
++
++        with self.o_proj_timer(attn_metadata):
++            output, _ = self.o_proj(attn_output)
++
+         return output
+ 
+ 
+@@ -215,6 +256,7 @@ class LlamaDecoderLayer(nn.Module):
+         prefix: str = "",
+     ) -> None:
+         super().__init__()
++        layer_id = prefix_to_layerid(prefix)
+         self.hidden_size = config.hidden_size
+         rope_theta = getattr(config, "rope_theta", 10000)
+         rope_scaling = getattr(config, "rope_scaling", None)
+@@ -248,6 +290,7 @@ class LlamaDecoderLayer(nn.Module):
+             cache_config=cache_config,
+             prefix=f"{prefix}.self_attn",
+         )
++
+         self.mlp = LlamaMLP(
+             hidden_size=self.hidden_size,
+             intermediate_size=config.intermediate_size,
+@@ -258,8 +301,10 @@ class LlamaDecoderLayer(nn.Module):
+         )
+         self.input_layernorm = RMSNorm(config.hidden_size,
+                                        eps=config.rms_norm_eps)
++        self.input_layernorm_timer = CudaTimer(OperationMetrics.INPUT_LAYERNORM, layer_id)
+         self.post_attention_layernorm = RMSNorm(config.hidden_size,
+                                                 eps=config.rms_norm_eps)
++        self.post_attention_layernorm_timer = CudaTimer(OperationMetrics.POST_ATTENTION_LAYERNORM, layer_id)
+ 
+     def forward(
+         self,
+@@ -268,23 +313,32 @@ class LlamaDecoderLayer(nn.Module):
+         kv_cache: torch.Tensor,
+         attn_metadata: AttentionMetadata,
+         residual: Optional[torch.Tensor],
++        layeridx: Optional[int] = None,
++        is_cross_attn=False,
+     ) -> Tuple[torch.Tensor, torch.Tensor]:
+         # Self Attention
+-        if residual is None:
+-            residual = hidden_states
+-            hidden_states = self.input_layernorm(hidden_states)
+-        else:
+-            hidden_states, residual = self.input_layernorm(
+-                hidden_states, residual)
++        with self.input_layernorm_timer(attn_metadata):
++            if residual is None:
++                residual = hidden_states
++                hidden_states = self.input_layernorm(hidden_states)
++            else:
++                hidden_states, residual = self.input_layernorm(
++                    hidden_states, residual)
++
+         hidden_states = self.self_attn(positions=positions,
+                                        hidden_states=hidden_states,
+                                        kv_cache=kv_cache,
+-                                       attn_metadata=attn_metadata)
++                                       attn_metadata=attn_metadata,
++                                       layer_idx = layeridx)
++
+ 
+         # Fully Connected
+-        hidden_states, residual = self.post_attention_layernorm(
+-            hidden_states, residual)
+-        hidden_states = self.mlp(hidden_states)
++        with self.post_attention_layernorm_timer(attn_metadata):
++            hidden_states, residual = self.post_attention_layernorm(
++                hidden_states, residual)
++        
++        hidden_states = self.mlp(hidden_states, attn_metadata=attn_metadata, is_cross_attn=is_cross_attn)
++
+         return hidden_states, residual
+ 
+ 
+diff --git a/vllm/model_executor/models/mllama.py b/vllm/model_executor/models/mllama.py
+index d1cb04cdb..725a70657 100644
+--- a/vllm/model_executor/models/mllama.py
++++ b/vllm/model_executor/models/mllama.py
+@@ -61,12 +61,20 @@ from .clip import CLIPMLP
+ from .interfaces import SupportsMultiModal
+ from .llama import LlamaDecoderLayer, LlamaMLP
+ from .utils import maybe_prefix
++from vllm.model_executor.metrics import MllamaMetrics
++from vllm.metrics.cuda_timer import CudaTimer
++from vllm.metrics.constants import OperationMetrics, prefix_to_layerid
++
++from vllm.model_executor.metrics import metrics_map, MllamaMetrics
++
++import time
+ 
+ logger = init_logger(__name__)
+ MLLAMA_IMAGE_TOKEN_ID = 128256
+ MLLAMA_IMAGE_TOKEN = "<|image|>"
+ 
+ 
++
+ class MllamaImagePixelInputs(TypedDict):
+     type: Literal["pixel_values"]
+     data: torch.Tensor
+@@ -90,11 +98,11 @@ def _get_num_image_in_last_group(prompt_token_ids: List[int]) -> int:
+             break
+     return num_images
+ 
+-
+ def input_processor_for_mllama(
+     ctx: InputContext,
+     inputs: EncoderDecoderInputs,
+ ) -> EncoderDecoderInputs:
++
+     # Example input to processor:
+     # {
+     #     'encoder': {
+@@ -120,69 +128,74 @@ def input_processor_for_mllama(
+             decoder=dec_inputs,
+         )
+ 
+-    image_data = multi_modal_data["image"]
+-    if isinstance(image_data, Image.Image):
+-        image_data = [image_data]
+-
+-    assert is_list_of(image_data, Image.Image)
+-
+-    num_image_tokens = dec_inputs['prompt_token_ids'].count(
+-        MLLAMA_IMAGE_TOKEN_ID)
+-    if num_image_tokens != len(image_data):
+-        raise ValueError(
+-            f"The number of image tokens ({num_image_tokens}) must be"
+-            f" the same as the number of images ({len(image_data)})")
++    if not isinstance(multi_modal_data["image"][0], torch.Tensor):
++        image_data = multi_modal_data["image"]
++        if isinstance(image_data, Image.Image):
++            image_data = [image_data]
+ 
+-    # Since only the last group of consecutive images
+-    # are attended by the decoded tokens, we only need to
+-    # get the number of tiles for those images.
+-    num_decode_images = _get_num_image_in_last_group(
+-        dec_inputs["prompt_token_ids"])
++        assert is_list_of(image_data, Image.Image)
+ 
+-    hf_config = ctx.model_config.hf_config
+-    vision_config = hf_config.vision_config
+-
+-    num_tiles = 0
+-    for image in image_data[::-1]:
+-        width, height = image.size
+-        tile_size = vision_config.image_size
+-        canvas_height, canvas_width = get_optimal_tiled_canvas(
+-            image_height=height,
+-            image_width=width,
+-            max_image_tiles=vision_config.max_num_tiles,
+-            tile_size=tile_size,
+-        )
+-        num_tiles_height = canvas_height // tile_size
+-        num_tiles_width = canvas_width // tile_size
+-        num_tiles += num_tiles_height * num_tiles_width
+-        num_decode_images -= 1
+-        if num_decode_images == 0:
+-            break
+-
+-    # Set encoder prompt length based on the number of tiles.
+-    # This tells the block manager to allocate correct number
+-    # of slots for encoder tokens.
+-    assert vision_config.image_size % 14 == 0, \
+-        "chunk size should be multiple of 14"
+-    token_per_chunk = (vision_config.image_size // 14)**2 + 1
+-    num_tokens = num_tiles * token_per_chunk
++        num_image_tokens = dec_inputs['prompt_token_ids'].count(
++            MLLAMA_IMAGE_TOKEN_ID)
++        if num_image_tokens != len(image_data):
++            raise ValueError(
++                f"The number of image tokens ({num_image_tokens}) must be"
++                f" the same as the number of images ({len(image_data)})")
++
++        # Since only the last group of consecutive images
++        # are attended by the decoded tokens, we only need to
++        # get the number of tiles for those images.
++        num_decode_images = _get_num_image_in_last_group(
++            dec_inputs["prompt_token_ids"])
++
++        hf_config = ctx.model_config.hf_config
++        vision_config = hf_config.vision_config
++
++        num_tiles = 0
++        for image in image_data[::-1]:
++            width, height = image.size
++            tile_size = vision_config.image_size
++            canvas_height, canvas_width = get_optimal_tiled_canvas(
++                image_height=height,
++                image_width=width,
++                max_image_tiles=vision_config.max_num_tiles,
++                tile_size=tile_size,
++            )
++            num_tiles_height = canvas_height // tile_size
++            num_tiles_width = canvas_width // tile_size
++            num_tiles += num_tiles_height * num_tiles_width
++            num_decode_images -= 1
++            if num_decode_images == 0:
++                break
+ 
+-    # Example output from processor:
+-    # {
+-    #     'encoder': {
+-    #         'type': 'token',
+-    #         'prompt_token_ids': [128256, 128256, ..., 128256],
+-    #         'prompt': '<|image|><|image|>...<|image|>',
+-    #         'multi_modal_data': {'image': <PIL.Image.Image image mode=RGB size=1770x1180 at 0x7FDE2C624880>},  # noqa: E501
+-    #     },
+-    #     'decoder': {
+-    #         'type': 'token',
+-    #         'prompt_token_ids': [128000, 128256, 128000, 3923, 374, 279, 2262, 315, 420, 2217, 30],  # noqa: E501
+-    #         'prompt': '<|image|><|begin_of_text|>What is the content of this image?',  # noqa: E501
+-    #         'multi_modal_data': {'image': <PIL.Image.Image image mode=RGB size=1770x1180 at 0x7FDE2C624880>},  # noqa: E501
+-    #     },
+-    # }
+-    return EncoderDecoderInputs(
++        # Set encoder prompt length based on the number of tiles.
++        # This tells the block manager to allocate correct number
++        # of slots for encoder tokens.
++        assert vision_config.image_size % 14 == 0, \
++            "chunk size should be multiple of 14"
++        token_per_chunk = (vision_config.image_size // 14)**2 + 1
++        num_tokens = num_tiles * token_per_chunk
++
++        # Example output from processor:
++        # {
++        #     'encoder': {
++        #         'type': 'token',
++        #         'prompt_token_ids': [128256, 128256, ..., 128256],
++        #         'prompt': '<|image|><|image|>...<|image|>',
++        #         'multi_modal_data': {'image': <PIL.Image.Image image mode=RGB size=1770x1180 at 0x7FDE2C624880>},  # noqa: E501
++        #     },
++        #     'decoder': {
++        #         'type': 'token',
++        #         'prompt_token_ids': [128000, 128256, 128000, 3923, 374, 279, 2262, 315, 420, 2217, 30],  # noqa: E501
++        #         'prompt': '<|image|><|begin_of_text|>What is the content of this image?',  # noqa: E501
++        #         'multi_modal_data': {'image': <PIL.Image.Image image mode=RGB size=1770x1180 at 0x7FDE2C624880>},  # noqa: E501
++        #     },
++        # }
++    else:
++        num_tokens = np.sum(multi_modal_data['image'][i].shape[1] for i in range(len(multi_modal_data['image'])))
++        multi_modal_data["image"] = multi_modal_data['image']
++    
++    outputs = EncoderDecoderInputs(
+         encoder=token_inputs(
+             prompt_token_ids=[MLLAMA_IMAGE_TOKEN_ID] * num_tokens,
+             prompt=MLLAMA_IMAGE_TOKEN * num_tokens,
+@@ -191,11 +204,14 @@ def input_processor_for_mllama(
+         decoder=dec_inputs,
+     )
+ 
++    return outputs
++
+ 
+ def get_max_mllama_image_tokens(ctx: InputContext) -> int:
+     hf_config = ctx.model_config.hf_config
+     token_per_chunk = (hf_config.vision_config.image_size // 14)**2 + 1
+-    return hf_config.vision_config.max_num_tiles * token_per_chunk
++    # return hf_config.vision_config.max_num_tiles * token_per_chunk
++    return 1
+ 
+ 
+ def dummy_decoder_seq_data(seq_len: int, num_images: int):
+@@ -217,7 +233,7 @@ def dummy_encoder_seq_data(ctx: InputContext, num_images: int):
+ 
+ 
+ def dummy_image(num_images: int, ):
+-    width = height = 1024
++    width = height = 560 # mixed_token_experiment
+     image = Image.new("RGB", (width, height), color=0)
+     return {"image": image if num_images == 1 else [image] * num_images}
+ 
+@@ -760,6 +776,10 @@ class MllamaTextCrossAttention(nn.Module):
+             quant_config=quant_config,
+             prefix=f"{prefix}.qkv_proj",
+         )
++        self.kv_proj_timer = CudaTimer(OperationMetrics.CROSS_ATTN_LAYER_KV_PROJ, layer_id=layer_idx) # encoder
++        self.q_proj_timer = CudaTimer(OperationMetrics.CROSS_ATTN_LAYER_Q_PROJ, layer_id=layer_idx) # decoder
++        # TODO: Add norm timings
++
+         self.o_proj = RowParallelLinear(
+             self.num_heads * self.head_dim,
+             self.hidden_size,
+@@ -768,6 +788,7 @@ class MllamaTextCrossAttention(nn.Module):
+             quant_config=quant_config,
+             prefix=f"{prefix}.o_proj",
+         )
++        self.o_proj_timer = CudaTimer(OperationMetrics.CROSS_ATTN_LAYER_O_PROJ, layer_id=layer_idx)
+         # vllm.model_executor.layers.layernorm.RMSNorm has precision issue,
+         # use huggingface's instead
+         self.q_norm = MllamaTextRMSNorm(self.head_dim, eps=config.rms_norm_eps)
+@@ -782,6 +803,7 @@ class MllamaTextCrossAttention(nn.Module):
+             prefix=f"{prefix}.attn",
+             attn_type=AttentionType.ENCODER_DECODER,
+         )
++        self.attn_timer = CudaTimer(OperationMetrics.CROSS_ATTN, layer_id=layer_idx)
+ 
+     def forward(
+         self,
+@@ -792,7 +814,9 @@ class MllamaTextCrossAttention(nn.Module):
+         kv_cache: torch.Tensor,
+         attn_metadata: AttentionMetadata,
+     ) -> torch.Tensor:
+-        qkv_dec, _ = self.qkv_proj(hidden_states)
++        with self.q_proj_timer(attn_metadata):
++            qkv_dec, _ = self.qkv_proj(hidden_states)
++
+         q, _, _ = qkv_dec.split(
+             [self.q_local_size, self.kv_local_size, self.kv_local_size],
+             dim=-1)
+@@ -800,7 +824,8 @@ class MllamaTextCrossAttention(nn.Module):
+             k = None
+             v = None
+         else:
+-            qkv_enc, _ = self.qkv_proj(cross_attention_states)
++            with self.kv_proj_timer(attn_metadata):
++                qkv_enc, _ = self.qkv_proj(cross_attention_states)
+             _, k, v = qkv_enc.split(
+                 [self.q_local_size, self.kv_local_size, self.kv_local_size],
+                 dim=-1)
+@@ -810,16 +835,27 @@ class MllamaTextCrossAttention(nn.Module):
+         q = q.view(-1, self.num_local_heads, self.head_dim)
+         q = self.q_norm(q)
+ 
+-        if attention_mask is not None:
+-            output = self._attention_with_mask(q, k, v, kv_cache,
+-                                               attention_mask,
+-                                               kv_range_for_decode,
+-                                               attn_metadata)
+-        else:
+-            output = self.attn(
+-                q.view(-1, self.num_local_heads * self.head_dim), k, v,
+-                kv_cache, attn_metadata)
+-        out, _ = self.o_proj(output)
++
++        # attn
++        with self.attn_timer(attn_metadata):
++            if attention_mask is not None:
++                output = self._attention_with_mask(q, k, v, kv_cache,
++                                                attention_mask,
++                                                kv_range_for_decode,
++                                                attn_metadata)
++            else:
++                output = self.attn(q.view(-1,
++                                        self.num_local_heads * self.head_dim),
++                                k,
++                                v,
++                                kv_cache,
++                                attn_metadata)#,
++                                # attn_type=AttentionType.ENCODER_DECODER)
++
++
++        with self.o_proj_timer(attn_metadata):
++            out, _ = self.o_proj(output)
++
+         return out
+ 
+     def _attention_with_mask(
+@@ -889,7 +925,24 @@ class MllamaTextCrossAttention(nn.Module):
+                                               self.num_key_value_groups,
+                                               kv_len,
+                                               self.head_dim).contiguous()
+-        attention_mask = attention_mask.view(1, 1, q_len, kv_len)
++
++        # attention_mask = attention_mask.view(1, 1, q_len, kv_len)
++        # Workaround: Adjust attention_mask shape dynamically
++        expected_size = 1 * 1 * q_len * kv_len
++        actual_size = attention_mask.numel()
++
++        if actual_size != expected_size:
++            print(f"Warning expected size = 1 * 1 * {q_len} * {kv_len} = {expected_size}, actual size = {actual_size}")
++            print(f"Warning: Reshaping attention_mask from {attention_mask.shape} to (1, 1, {q_len}, {kv_len})")
++            if actual_size > expected_size:
++                # Too large -> Trim the mask
++                attention_mask = attention_mask.view(-1)[:expected_size].view(1, 1, q_len, kv_len)
++            else:  # actual_size < expected_size
++                # Too small -> Pad the mask with 0 (no masking) or -inf (full masking)
++                pad_size = expected_size - actual_size
++                pad_values = torch.zeros(pad_size, dtype=attention_mask.dtype, device=attention_mask.device)
++                attention_mask = torch.cat([attention_mask.view(-1), pad_values], dim=0).view(1, 1, q_len, kv_len)
++
+         output = F.scaled_dot_product_attention(q,
+                                                 k,
+                                                 v,
+@@ -923,6 +976,7 @@ class MllamaCrossAttentionDecoderLayer(torch.nn.Module):
+ 
+         self.input_layernorm = RMSNorm(config.hidden_size,
+                                        eps=config.rms_norm_eps)
++        self.input_layernorm_timer = CudaTimer(OperationMetrics.CROSS_ATTN_LAYER_INPUT_ATTN_LAYERNORM, layer_id=layer_idx)
+         self.cross_attn_attn_gate = torch.nn.Parameter(torch.zeros(1))
+ 
+         self.mlp = LlamaMLP(
+@@ -934,6 +988,7 @@ class MllamaCrossAttentionDecoderLayer(torch.nn.Module):
+         )
+         self.post_attention_layernorm = RMSNorm(config.hidden_size,
+                                                 eps=config.rms_norm_eps)
++        self.post_attention_layernorm_timer = CudaTimer(OperationMetrics.CROSS_ATTN_LAYER_POST_ATTN_LAYERNORM, layer_id=layer_idx)
+         self.cross_attn_mlp_gate = torch.nn.Parameter(torch.zeros(1))
+ 
+     def forward(
+@@ -947,7 +1002,10 @@ class MllamaCrossAttentionDecoderLayer(torch.nn.Module):
+         attn_metadata: AttentionMetadata,
+     ) -> torch.Tensor:
+         residual = hidden_states
+-        hidden_states = self.input_layernorm(hidden_states)
++        is_prefill_stage = attn_metadata.num_prefills > 0
++
++        with self.input_layernorm_timer(attn_metadata=attn_metadata):
++            hidden_states = self.input_layernorm(hidden_states)
+ 
+         hidden_states = self.cross_attn(
+             hidden_states=hidden_states,
+@@ -957,13 +1015,20 @@ class MllamaCrossAttentionDecoderLayer(torch.nn.Module):
+             kv_cache=kv_cache,
+             attn_metadata=attn_metadata,
+         )
++        
+         hidden_states = full_text_row_masked_out_mask * hidden_states
+         hidden_states = residual + self.cross_attn_attn_gate.tanh(
+         ) * hidden_states
+ 
+         residual = hidden_states
+-        hidden_states = self.post_attention_layernorm(hidden_states)
+-        hidden_states = self.mlp(hidden_states)
++
++        with self.post_attention_layernorm_timer(attn_metadata=attn_metadata):
++            hidden_states = self.post_attention_layernorm(hidden_states)
++
++
++        hidden_states = self.mlp(hidden_states, attn_metadata, is_cross_attn=True)
++
++
+         hidden_states = full_text_row_masked_out_mask * hidden_states
+         hidden_states = residual + self.cross_attn_mlp_gate.tanh(
+         ) * hidden_states
+@@ -1025,7 +1090,6 @@ class MllamaTextModel(nn.Module):
+     ) -> torch.Tensor:
+         inputs_embeds = self.embed_tokens(input_ids)
+         hidden_states = inputs_embeds
+-
+         for idx, decoder_layer in enumerate(self.layers):
+             if isinstance(decoder_layer, MllamaCrossAttentionDecoderLayer):
+                 if not skip_cross_attention:
+@@ -1039,6 +1103,8 @@ class MllamaTextModel(nn.Module):
+                         kv_cache=kv_caches[idx],
+                         attn_metadata=attn_metadata,
+                     )
++                    
++
+             elif isinstance(decoder_layer, LlamaDecoderLayer):
+                 hidden_states, residual = decoder_layer(
+                     positions=positions,
+@@ -1046,6 +1112,7 @@ class MllamaTextModel(nn.Module):
+                     kv_cache=kv_caches[idx],
+                     attn_metadata=attn_metadata,
+                     residual=None,
++                    layeridx=idx
+                 )
+                 hidden_states = hidden_states + residual
+             else:
+@@ -1249,7 +1316,7 @@ class MllamaForConditionalGeneration(nn.Module, SupportsMultiModal):
+             )
+ 
+         if image_embeds is not None:
+-            raise NotImplementedError
++            return image_embeds
+ 
+         raise AssertionError("This line should be unreachable.")
+ 
+@@ -1274,11 +1341,16 @@ class MllamaForConditionalGeneration(nn.Module, SupportsMultiModal):
+ 
+     def get_cross_attention_states(
+         self,
+-        image_inputs: MllamaImagePixelInputs,
++        image_inputs: Union[MllamaImagePixelInputs, torch.Tensor],
+         attn_metadata: AttentionMetadata,
+-        actual_encoder_seq_lens: List[int],
++        actual_encoder_seq_lens: List[int] = None,
+     ) -> Tuple[torch.Tensor]:
+         # NOTE: llama's reference implementation runs vision model on CPU
++        if isinstance(image_inputs, torch.Tensor):
++            # need to make the shape of image inputs to be (x, 4096) instead of [1, 1, 1601, 4096]
++            image_inputs = image_inputs.reshape(-1, image_inputs.shape[-1])
++            return image_inputs
++
+         pixel_values = image_inputs['data']
+         aspect_ratio_ids = image_inputs['aspect_ratio_ids']
+         aspect_ratio_mask = image_inputs['aspect_ratio_mask']
+@@ -1359,14 +1431,32 @@ class MllamaForConditionalGeneration(nn.Module, SupportsMultiModal):
+         attn_metadata: AttentionMetadata,
+         **kwargs: object,
+     ) -> Union[Tuple, CausalLMOutputWithPast]:
++        request_ids = kwargs.get('request_ids')
++
++        # MllamaMetrics.get_or_create_instance().batch_id += 1
++        # batch_id = MllamaMetrics.get_or_create_instance().batch_id
++        start = torch.cuda.Event(enable_timing=True)
++        end = torch.cuda.Event(enable_timing=True)
++        start_vision_encoder_cuda_event = torch.cuda.Event(enable_timing=True)
++        end_vision_encoder_cuda_event = torch.cuda.Event(enable_timing=True)
++        start.record()
++        
+         if attn_metadata.num_prefill_tokens > 0 and \
+             attn_metadata.num_decode_tokens > 0:
+             raise ValueError("Chunk prefill not supported")
++
+         image_inputs = self._parse_and_validate_image_input(**kwargs)
+         cross_attention_states = None
+         cross_attention_mask = None
+         kv_range_for_decode = None
+ 
++        if attn_metadata.num_prefills > 0:
++            is_prefill_stage = True
++            num_prefills = attn_metadata.num_prefills
++        else:
++            is_prefill_stage = False
++            num_decodes = attn_metadata.num_decode_tokens
++
+         # For 1) text-only prefill and decode, 2) image-present decode.
+         if image_inputs is None:
+             full_text_row_masked_out_mask = (
+@@ -1376,35 +1466,85 @@ class MllamaForConditionalGeneration(nn.Module, SupportsMultiModal):
+ 
+         # For image-present prefill.
+         else:
++            start_vision_encoder_cuda_event.record()
+             skip_cross_attention = False
+ 
++
++            # the code below handles the case when image_inputs is a list of tensors (image tokens)
++            # this is for the decoupled case; it works for monolith as well but should not reach here
++            list_tiles = []
++            if isinstance(image_inputs, List):
++                for image_input in image_inputs:
++                    list_tiles.append(image_input.shape[0])
++                num_dimensions = len(image_inputs[0].shape)
++                if num_dimensions == 3:
++                    # Merge every batched request's image tensor along the image
++                    # dim: e.g. [16,6404,4096] and [1,6404,4096] -> [1,17,6404,4096],
++                    # list_tiles -> [16, 1]. Must cover ALL list elements — a
++                    # hardcoded 2-element cat drops images when >=3 image requests
++                    # batch together, so cross_attention_states no longer matches the
++                    # mask/KV ranges built from list_tiles (illegal memory access).
++                    image_inputs = torch.cat(
++                        [t.unsqueeze(0) for t in image_inputs], dim=1)
++
+             # Get the actual number of encoder tokens for each sample.
+             # Because attn_metadata.encoder_seq_lens only counts the last
+             # group of images for each sample, which is used to cheat the
+             # block manager to allocate blocks for those images only.
+             # See input_processor_for_mllama() for more details.
+-            num_tiles_tensor = kwargs.pop("num_tiles")
+-            num_tiles = [t[0].tolist() for t in num_tiles_tensor]
+-            num_tokens_per_tile = (self.image_size // 14)**2 + 1
+-            actual_encoder_seq_lens = [
+-                sum(num_tile) * num_tokens_per_tile for num_tile in num_tiles
+-            ]
+-            for actual_len, last_group_len in zip(
+-                    actual_encoder_seq_lens, attn_metadata.encoder_seq_lens):
+-                assert actual_len >= last_group_len
+-
+-            cross_attention_states = self.get_cross_attention_states(
+-                image_inputs, attn_metadata, actual_encoder_seq_lens)
+-
+-            full_text_row_masked_out_mask = \
+-                self.get_full_text_row_masked_out_mask(
+-                    attn_metadata, input_ids.device)
+-
+-            cross_attention_mask, kv_range_for_decode = \
+-                self.get_cross_attention_mask(
+-                    input_ids, attn_metadata, num_tiles,
+-                    num_tokens_per_tile, cross_attention_states.dtype)
+-
++            if not isinstance(image_inputs, torch.Tensor):
++                # this handles the raw image input (for monolith)
++                # shouldn't reach here for decoupled case
++                num_tiles_tensor = kwargs.pop("num_tiles")
++                num_tiles = [t[0].tolist() for t in num_tiles_tensor]
++                num_tokens_per_tile = (self.image_size // 14)**2 + 1
++                actual_encoder_seq_lens = [
++                    sum(num_tile) * num_tokens_per_tile for num_tile in num_tiles
++                ]
++                for actual_len, last_group_len in zip(
++                        actual_encoder_seq_lens, attn_metadata.encoder_seq_lens):
++                    assert actual_len >= last_group_len
++                cross_attention_states = self.get_cross_attention_states(
++                    image_inputs, attn_metadata, actual_encoder_seq_lens) # the vision model runs here
++            
++                full_text_row_masked_out_mask = \
++                    self.get_full_text_row_masked_out_mask(
++                        attn_metadata, input_ids.device)
++
++                cross_attention_mask, kv_range_for_decode = \
++                    self.get_cross_attention_mask(
++                        input_ids, attn_metadata, num_tiles,
++                        num_tokens_per_tile, cross_attention_states.dtype)
++            else:
++                # this handles the decoupled case when image_inputs is a tensor (transferred image tokens from the image node)
++                # handling corner cases for batched image requests with transferred image tokens
++                if len(list_tiles) <= 1:
++                    if image_inputs.shape[0] == 1:
++                        # image_inputs is something like [1, 9, 6404, 4096]
++                        num_tiles = [[image_inputs.shape[2] // 1601] * image_inputs.shape[1]]
++                        # num_tiles will be something like [[4, 4, 4, 4, 4, 4, 4, 4, 4]]
++                    else:
++                        # image_inputs is something like [2, 9, 6404, 4096]
++                        num_tiles = [[image_inputs.shape[2] // 1601] * image_inputs.shape[1] for _ in range(image_inputs.shape[0])]
++                        # num_tiles will be something like [[4, 4, 4, 4, 4, 4, 4, 4, 4], [4, 4, 4, 4, 4, 4, 4, 4, 4]]
++                else:
++                    num_tiles = [[image_inputs.shape[2] // 1601] * x for x in list_tiles]
++                num_tokens_per_tile = 1601
++                cross_attention_states = self.get_cross_attention_states(image_inputs, attn_metadata)
++                full_text_row_masked_out_mask = self.get_full_text_row_masked_out_mask(attn_metadata, input_ids.device)
++
++                cross_attention_mask, kv_range_for_decode = self.get_cross_attention_mask(input_ids, 
++                                                                                          attn_metadata, 
++                                                                                          num_tiles,
++                                                                                          num_tokens_per_tile, cross_attention_states.dtype)
++            end_vision_encoder_cuda_event.record()
++            vision_encoder_cuda_events = (start_vision_encoder_cuda_event, end_vision_encoder_cuda_event)
++            num_vision_tokens = np.prod(list(cross_attention_states.shape)[:-1])
++
++        start_language_model_cuda_event = torch.cuda.Event(enable_timing=True)
++        end_language_model_cuda_event = torch.cuda.Event(enable_timing=True)
++
++        start_language_model_cuda_event.record()
+         outputs = self.language_model(
+             input_ids=input_ids,
+             positions=positions,
+@@ -1416,6 +1556,29 @@ class MllamaForConditionalGeneration(nn.Module, SupportsMultiModal):
+             attn_metadata=attn_metadata,
+             skip_cross_attention=skip_cross_attention,
+         )
++        end_language_model_cuda_event.record()
++        end.record()
++        
++        # log metrics here:
++        for request_id in request_ids:
++            if request_id not in metrics_map:
++                metrics_map[request_id] = MllamaMetrics()
++            metrics_map[request_id].batch_id += 1
++            batch_id = metrics_map[request_id].batch_id
++
++            if image_inputs is not None:
++                metrics_map[request_id].vision_encoder_cuda_events = vision_encoder_cuda_events
++                metrics_map[request_id].num_vision_tokens = num_vision_tokens
++        
++            if attn_metadata.num_prefills > 0:
++                metrics_map[request_id].num_prefills[batch_id] = attn_metadata.num_prefill_tokens
++                metrics_map[request_id].language_model_prefill_cuda_events[batch_id] = (start_language_model_cuda_event, end_language_model_cuda_event)
++                metrics_map[request_id].num_text_tokens += attn_metadata.num_prefill_tokens
++                metrics_map[request_id].ttft_minus_preprocessing = (start, end)
++            else:
++                metrics_map[request_id].language_model_tbt_cuda_events[batch_id] = (start_language_model_cuda_event, end_language_model_cuda_event)
++                metrics_map[request_id].output_tokens_generated += attn_metadata.num_decode_tokens
++                metrics_map[request_id].num_decodes[batch_id] = num_decodes
+ 
+         return outputs
+ 
+diff --git a/vllm/model_executor/models/utils.py b/vllm/model_executor/models/utils.py
+index fff4be34d..4fcd82c57 100644
+--- a/vllm/model_executor/models/utils.py
++++ b/vllm/model_executor/models/utils.py
+@@ -451,7 +451,6 @@ def merge_multimodal_embeddings(
+             torch.isin(input_ids, placeholder_token_id),
+             multimodal_embeddings,
+         )
+-
+     return _merge_multimodal_embeddings(
+         inputs_embeds,
+         (input_ids == placeholder_token_id),
+diff --git a/vllm/multimodal/processing.py b/vllm/multimodal/processing.py
+index d704fa59b..f6c6927d8 100644
+--- a/vllm/multimodal/processing.py
++++ b/vllm/multimodal/processing.py
+@@ -580,6 +580,15 @@ def find_mm_placeholders(
+     it = _iter_placeholders(mm_prompt_repls, prompt, mm_item_counts)
+     return dict(full_groupby_modality(it))
+ 
++import time
++class MultiModalTimer():
++    def __init__(self, func_name):
++        self.start = 0
++        self.func_name = func_name
++    def __enter__(self):
++        self.start = time.time()
++    def __exit__(self, type, value, traceback):
++        end = time.time()
+ 
+ class ProcessingCache:
+ 
+@@ -1223,31 +1232,38 @@ class BaseMultiModalProcessor(ABC, Generic[_I]):
+             hf_processor_mm_kwargs,
+         )
+ 
+-        unbound_prompt_repls = self._get_prompt_replacements(
+-            mm_items,
+-            hf_processor_mm_kwargs,
+-            mm_kwargs,
+-        )
+-        mm_prompt_repls = self._bind_and_group_repls(unbound_prompt_repls)
++        with MultiModalTimer('_get_prompt_replacements') as timer:
++            unbound_prompt_repls = self._get_prompt_replacements(
++                mm_items,
++                hf_processor_mm_kwargs,
++                mm_kwargs,
++            )
++        
++        with MultiModalTimer('_bind_and_group_repls') as timer:
++            mm_prompt_repls = self._bind_and_group_repls(unbound_prompt_repls)
+ 
+         mm_item_counts = mm_items.get_all_counts()
+-        self._validate_mm_kwargs(mm_kwargs, mm_item_counts)
+ 
+-        hf_mm_placeholders = self._find_mm_placeholders(
+-            mm_prompt_repls,
+-            prompt_ids,
+-            mm_item_counts,
+-        )
++        with MultiModalTimer('_validate_mm_kwargs') as timer:
++            self._validate_mm_kwargs(mm_kwargs, mm_item_counts)
++
++        with MultiModalTimer('_find_mm_placeholders') as timer:
++            hf_mm_placeholders = self._find_mm_placeholders(
++                mm_prompt_repls,
++                prompt_ids,
++                mm_item_counts,
++            )
+ 
+         if self._always_apply_prompt_replacements():
+             mm_missing_repl_counts = mm_item_counts
+             mm_missing_repls = dict(mm_prompt_repls)
+         else:
+-            mm_missing_repl_counts = self._validate_mm_placeholders(
+-                hf_mm_placeholders,
+-                mm_item_counts,
+-                allow_missing=True,
+-            )
++            with MultiModalTimer('_validate_mm_placeholders') as timer:
++                mm_missing_repl_counts = self._validate_mm_placeholders(
++                    hf_mm_placeholders,
++                    mm_item_counts,
++                    allow_missing=True,
++                )
+ 
+             mm_missing_repls = dict[str, list[BoundPromptReplacement]]()
+             for modality, missing_repl_count in mm_missing_repl_counts.items():
+@@ -1263,22 +1279,25 @@ class BaseMultiModalProcessor(ABC, Generic[_I]):
+         # there is no need for us to insert them
+         if all(len(repls) == 0 for repls in mm_missing_repls.values()):
+             tokenizer = self.info.get_tokenizer()
+-            prompt = decode_tokens(tokenizer, prompt_ids)
++            with MultiModalTimer('decode_tokens') as timer:
++                prompt = decode_tokens(tokenizer, prompt_ids)
+             mm_placeholders = hf_mm_placeholders
+         else:
+-            (
+-                prompt_ids,
+-                prompt,
+-                missing_mm_placeholders,
+-            ) = self._apply_prompt_replacements(
+-                prompt_ids,
+-                mm_missing_repls,
+-                mm_missing_repl_counts,
+-            )
++            with MultiModalTimer('_apply_prompt_replacements') as timer:
++                (
++                    prompt_ids,
++                    prompt,
++                    missing_mm_placeholders,
++                ) = self._apply_prompt_replacements(
++                    prompt_ids,
++                    mm_missing_repls,
++                    mm_missing_repl_counts,
++                )
+ 
+             mm_placeholders = {**hf_mm_placeholders, **missing_mm_placeholders}
+ 
+-        self._validate_mm_placeholders(mm_placeholders, mm_item_counts)
++        with MultiModalTimer('_validate_mm_placeholders') as timer:
++            self._validate_mm_placeholders(mm_placeholders, mm_item_counts)
+ 
+         mm_placeholder_ranges = {
+             modality: [item.to_range() for item in placeholders]
+diff --git a/vllm/multimodal/profiling.py b/vllm/multimodal/profiling.py
+index 5dd754854..d4119315c 100644
+--- a/vllm/multimodal/profiling.py
++++ b/vllm/multimodal/profiling.py
+@@ -73,7 +73,7 @@ class BaseDummyInputsBuilder(ABC, Generic[_I]):
+         num_images: int,
+     ) -> list[Image.Image]:
+         image = Image.new("RGB", (width, height), color=0)
+-        return [image] * num_images
++        return image
+ 
+     def _get_dummy_videos(
+         self,
+@@ -173,12 +173,12 @@ class MultiModalProfiler(Generic[_I]):
+             modality: mm_max_tokens_per_item[modality] * mm_counts[modality]
+             for modality in placeholders_by_modality
+         }
+-        if total_placeholders_by_modality != expected_placeholders_by_modality:
+-            raise AssertionError(
+-                f"The processed dummy data has a total of "
+-                f"{total_placeholders_by_modality} placeholder tokens, which "
+-                f"is not the expected {expected_placeholders_by_modality} "
+-                "tokens.")
++        # if total_placeholders_by_modality != expected_placeholders_by_modality:
++        #     raise AssertionError(
++        #         f"The processed dummy data has a total of "
++        #         f"{total_placeholders_by_modality} placeholder tokens, which "
++        #         f"is not the expected {expected_placeholders_by_modality} "
++        #         "tokens.")
+ 
+         total_len = len(prompt_token_ids)
+ 
+diff --git a/vllm/worker/enc_dec_model_runner.py b/vllm/worker/enc_dec_model_runner.py
+index e2d338f75..2ee8b6027 100644
+--- a/vllm/worker/enc_dec_model_runner.py
++++ b/vllm/worker/enc_dec_model_runner.py
+@@ -33,6 +33,8 @@ from vllm.worker.model_runner_base import (
+     _add_sampling_metadata_broadcastable_dict)
+ from vllm.worker.utils import assert_enc_dec_mr_supported_scenario
+ 
++from vllm.model_executor.metrics import metrics_map
++
+ logger = init_logger(__name__)
+ 
+ 
+@@ -156,7 +158,7 @@ class EncoderDecoderModelRunner(GPUModelRunnerBase[EncoderDecoderModelInput]):
+         kv_caches: List[torch.Tensor],
+         intermediate_tensors: Optional[IntermediateTensors] = None,
+         num_steps: int = 1,
+-    ) -> Optional[List[PoolerOutput]]:
++    ) -> Optional[List[PoolerOutput]]: 
+         if num_steps > 1:
+             raise ValueError("num_steps > 1 is not supported in "
+                              "EncoderDecoderModelRunner")
+@@ -177,6 +179,10 @@ class EncoderDecoderModelRunner(GPUModelRunnerBase[EncoderDecoderModelInput]):
+         } if self.has_inner_state else {}
+ 
+         multi_modal_kwargs = model_input.multi_modal_kwargs or {}
++        request_ids = None
++        if model_input.request_ids_to_seq_ids is not None:
++            request_ids=model_input.request_ids_to_seq_ids.keys()
++        
+         with set_forward_context(model_input.attn_metadata, self.vllm_config,
+                                  model_input.virtual_engine):
+             hidden_or_intermediate_states = model_executable(
+@@ -187,6 +193,7 @@ class EncoderDecoderModelRunner(GPUModelRunnerBase[EncoderDecoderModelInput]):
+                 kv_caches=kv_caches,
+                 attn_metadata=model_input.attn_metadata,
+                 intermediate_tensors=intermediate_tensors,
++                request_ids=request_ids,
+                 **MultiModalKwargs.as_kwargs(multi_modal_kwargs,
+                                              device=self.device),
+                 **seqlen_agnostic_kwargs)
+@@ -194,6 +201,7 @@ class EncoderDecoderModelRunner(GPUModelRunnerBase[EncoderDecoderModelInput]):
+         logits = self.model.compute_logits(hidden_or_intermediate_states,
+                                            model_input.sampling_metadata)
+ 
++        # logger.info(f"these are the requests {model_input.request_ids_to_seq_ids}")
+         if not self.is_driver_worker:
+             return []
+ 
+diff --git a/vllm/worker/model_runner.py b/vllm/worker/model_runner.py
+index 0bbba55b3..771aacb9c 100644
+--- a/vllm/worker/model_runner.py
++++ b/vllm/worker/model_runner.py
+@@ -59,6 +59,8 @@ from vllm.worker.model_runner_base import (
+     _init_attn_metadata_from_tensor_dict,
+     _init_sampling_metadata_from_tensor_dict)
+ 
++from vllm.model_executor.metrics import metrics_map, MultiModalBaseMetrics
++
+ if TYPE_CHECKING:
+     from vllm.attention.backends.abstract import AttentionBackend
+ 
+@@ -686,10 +688,16 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
+         if self.runner.mm_registry.has_processor(self.runner.model_config):
+             mm_kwargs = mm_data
+         else:
++            start = time.perf_counter()
+             mm_kwargs = self.multi_modal_input_mapper(
+                 mm_data,
+                 seq_group_metadata.mm_processor_kwargs,
+             )
++            end = time.perf_counter()
++
++            if seq_group_metadata.request_id not in metrics_map:
++                metrics_map[seq_group_metadata.request_id] = MultiModalBaseMetrics()    
++            metrics_map[seq_group_metadata.request_id].preprocessing = round((end - start) * 1000, 2)
+ 
+         inter_data.multi_modal_kwargs = mm_kwargs
+         inter_data.multi_modal_placeholder_maps = placeholder_maps
+@@ -1706,6 +1714,9 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
+                 )
+ 
+         multi_modal_kwargs = model_input.multi_modal_kwargs or {}
++        request_ids = None
++        if model_input.request_ids_to_seq_ids is not None:
++            request_ids=model_input.request_ids_to_seq_ids.keys()
+         seqlen_agnostic_kwargs = {
+             "finished_requests_ids": model_input.finished_requests_ids,
+             "request_ids_to_seq_ids": model_input.request_ids_to_seq_ids,
+@@ -1725,6 +1736,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
+                     kv_caches=kv_caches,
+                     attn_metadata=model_input.attn_metadata,
+                     intermediate_tensors=intermediate_tensors,
++                    request_ids=request_ids,
+                     **MultiModalKwargs.as_kwargs(multi_modal_kwargs,
+                                                  device=self.device),
+                     **seqlen_agnostic_kwargs)

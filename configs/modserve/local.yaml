@@ -1,0 +1,15 @@
+modserve_text_nodes:
+  - text_node_address: 127.0.0.1:8080
+    text_node_tp: TP2
+    local_ranks: [2, 3]
+modserve_image_nodes:
+  - image_node_address: 127.0.0.1:8086
+    image_node_rank: 0
+    image_node_tp: TP1
+    image_node_gpu_id: "0"
+    numa_physcpu: "0"
+  - image_node_address: 127.0.0.1:8087
+    image_node_rank: 1
+    image_node_tp: TP1
+    image_node_gpu_id: "1"
+    numa_physcpu: "1"

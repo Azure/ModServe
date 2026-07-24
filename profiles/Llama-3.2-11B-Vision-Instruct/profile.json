@@ -1,0 +1,18 @@
+{
+  "model": "meta-llama/Llama-3.2-11B-Vision-Instruct",
+  "note": "M_C derived EMPIRICALLY from the single-box modserve knee (the InternViT profiler does not fit the mllama vision tower). At the 40 QPM/box clean knee (2 TP2 text + 4 TP1 enc), offered image-token load = 8046 tok/s over 4 encoders = 2012 tok/s/encoder, and the image P99 TTFT bends just past 40 QPM -> the encoder pool is the binding constraint, so m_c_per_s=2012 is the measured mllama encoder capacity (4*2012=8048 ~= 8046, exact match). The text pool never saturated (1507 tok/s over 2 nodes = 754 tok/s/node, comfortable), so backend m_c is an ESTIMATE for a TP2 Llama-11B text node; tune live via AUTOSCALE_TEXT_MC.",
+  "arch": "MLLAMA",
+  "tokens_per_image": 6404,
+  "encoder": {
+    "stage": "encoder",
+    "deploy_tp": 1,
+    "m_c_per_s": 2012.0,
+    "source": "single-box knee (8046 image-tok/s / 4 TP1 encoders)"
+  },
+  "backend": {
+    "stage": "backend",
+    "deploy_tp": 2,
+    "m_c_per_s": 2500.0,
+    "source": "estimate (TP2 Llama-11B text node; text never saturated in the sweep) - override with AUTOSCALE_TEXT_MC"
+  }
+}

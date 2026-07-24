@@ -1,0 +1,41 @@
+# Pixi workspace for lmm-serving — the build system (see README; `pixi run setup`).
+[workspace]
+name = "lmm-serving"
+channels = ["conda-forge"]
+platforms = [{ platform = "linux-64", cuda = "12.4" }]
+
+[dependencies]
+python = "3.10.*"
+pip = "*"
+cuda-toolkit = "12.4.*"  # nvcc for the flash-attn build + cu124 runtime
+git = "*"
+ninja = "*"
+packaging = "*"
+yq = "*"
+gettext = "*"
+lsof = "*"
+numactl = "*"
+
+[pypi-dependencies]
+lmm-serving = { path = ".", editable = true }
+datasets = "==3.2.0"
+# transformers 4.48.x and tokenizers require huggingface-hub <1.0,>=0.24.0; unpinned it
+# resolves to 1.x and breaks vLLM/transformers at import. Pin to a known-good 0.27.x.
+huggingface-hub = "==0.27.1"
+Flask = "==3.1.0"
+pandas = "==2.2.3"
+scikit-learn = "==1.6.1"
+accelerate = ">=0.26.0"
+matplotlib = "==3.10.0"
+timm = "==1.0.15"
+pyyaml = "==6.0.3"
+torch = "==2.5.1"  # pinned to the vLLM backend's cu124 wheels
+torchvision = "==0.20.1"
+torchaudio = "==2.5.1"
+
+[tasks]
+build-vllm = "python -c 'import vllm' 2>/dev/null || bash llm-backend/build_vllm.sh"
+install-flash-attn = { cmd = "python -c 'import flash_attn' 2>/dev/null || (mkdir -p .cache/flashattn-build && TMPDIR=\"$PIXI_PROJECT_ROOT/.cache/flashattn-build\" pip install --no-cache-dir --no-build-isolation flash-attn==2.7.4.post1)", depends-on = ["build-vllm"] }
+setup = { depends-on = ["build-vllm", "install-flash-attn"] }
+# Full teardown: removes the env (vLLM, flash-attn, all deps) + the vLLM clone & caches.
+uninstall = "pixi clean && rm -rf llm-backend/vllm .cache"
