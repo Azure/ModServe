@@ -10,4 +10,4 @@ openai>=1.0.0
 huggingface-hub==0.27.1
 # sentencepiece>=0.2.0 rejects the InternVL2.5 (InternLM2) tokenizer.model with
 # "piece must not include null character"; pin to the last tolerant release.
-sentencepiece==0.1.99
+sentencepiece==0.2.1
